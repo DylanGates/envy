@@ -1,0 +1,55 @@
+mod add;
+mod check;
+mod export;
+mod expose;
+mod import;
+mod init;
+mod list;
+mod log;
+mod mcp;
+mod run;
+mod scan;
+mod show;
+
+use anyhow::bail;
+
+use crate::cli::{Cli, Commands, GlobalArgs};
+
+pub fn dispatch(cli: Cli) -> anyhow::Result<()> {
+    let global = &cli.global;
+    match cli.command {
+        Commands::Init => init::run(global),
+        Commands::Scan { path } => scan::run(path, global),
+        Commands::Add { name } => add::run(name, global),
+        Commands::List => list::run(global),
+        Commands::Show { reference, metadata_only } => show::run(reference, metadata_only, global),
+        Commands::Check {
+            reference,
+            project,
+            url,
+            auth_style,
+            header_name,
+        } => check::run(reference, project, url, auth_style, header_name, global),
+        Commands::Run { command } => run::run(command, global),
+        Commands::Expose { action } => expose::run(action, global),
+        Commands::Log { project } => log::run(project, global),
+        Commands::Export { encrypted } => export::run(encrypted, global),
+        Commands::Import { encrypted } => import::run(encrypted, global),
+        Commands::Mcp { action } => mcp::run(action, global),
+    }
+}
+
+/// Shared stub for commands that don't have a real implementation yet.
+///
+/// Prints a JSON-shaped message if `--json` is set, a plain message to
+/// stderr otherwise (suppressed by `--quiet`), then fails — there's no
+/// vault yet, so nothing can honestly report success.
+fn not_implemented(command: &str, global: &GlobalArgs) -> anyhow::Result<()> {
+    if global.json {
+        println!(r#"{{"error":"not_implemented","command":"{command}"}}"#);
+    }
+    // Plain-text case: `main()` prints this bail! message to stderr for
+    // every command's error, not just this one — no need to also
+    // eprintln here.
+    bail!("`envy {command}` is not implemented yet");
+}
