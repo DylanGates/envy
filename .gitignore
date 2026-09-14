@@ -1,0 +1,8 @@
+/target
+
+# mcp/ (TypeScript MCP adapter package)
+mcp/node_modules/
+mcp/dist/
+
+# core/ (Rust core crate, path dependency of this package)
+core/target/
