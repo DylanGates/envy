@@ -1,0 +1,7 @@
+use std::path::PathBuf;
+
+use crate::cli::GlobalArgs;
+
+pub fn run(_path: Option<PathBuf>, global: &GlobalArgs) -> anyhow::Result<()> {
+    super::not_implemented("scan", global)
+}
