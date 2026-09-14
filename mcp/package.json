@@ -1,0 +1,21 @@
+{
+  "name": "envy-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Stateless, untrusted MCP adapter exposing envy's capability-oriented tools to AI agents.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "zod": "^3"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2",
+    "@types/node": "^22.10.2"
+  }
+}
