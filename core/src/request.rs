@@ -48,12 +48,14 @@ pub fn execute(
         ))
     })?;
 
+    let has_active_consent = vault.has_active_consent(&descriptor.id, "make_authenticated_request")?;
     let policy_request = PolicyRequest {
         operation: "make_authenticated_request",
         provider: Some(&descriptor.id),
         domain: descriptor.domains.first().map(String::as_str),
         agent_identity: None,
         method: req.method,
+        has_active_consent,
     };
     match policy::evaluate(&policy_request) {
         PolicyDecision::Allow => {}
@@ -99,10 +101,21 @@ pub fn execute(
         .read_to_string()
         .map_err(|e| CoreError::Http(format!("failed to read response body: {e}")))?;
 
+    // The credential value must never reach the caller, even if the
+    // provider echoes it back in its response body — not just kept out of
+    // logs (see `docs/provider-testing-vision.md`'s threat model).
+    let leaked_in_body = body.contains(&secret_value);
+    let body = crate::redact::redact_body(&body, &secret_value);
+
     let outcome = if (200..300).contains(&status) {
         "success"
     } else {
         "error"
+    };
+    let redaction_summary = if leaked_in_body {
+        "Authorization/auth header redacted from logs; secret value found and redacted from response body"
+    } else {
+        "Authorization/auth header redacted from logs"
     };
     vault.log_event(&crate::audit::AuditEvent {
         subject: Some("mcp-adapter"),
@@ -111,7 +124,7 @@ pub fn execute(
         operation: "make_authenticated_request",
         endpoint_host: url.host_str(),
         outcome,
-        redaction_summary: Some("Authorization/auth header redacted from logs"),
+        redaction_summary: Some(redaction_summary),
     })?;
 
     Ok(AuthenticatedResponse {
@@ -411,5 +424,59 @@ domains = ["api.empty.com"]
         };
         let result = execute(&vault, &registry, &req);
         assert!(matches!(result, Err(CoreError::InvalidRequest(_))));
+    }
+
+    #[test]
+    #[ignore = "touches the real network"]
+    fn execute_over_real_network_allows_non_get_with_consent_and_redacts_response() {
+        // Exercises the full new path end to end against a real endpoint:
+        // a non-GET call fails closed without consent (existing coverage,
+        // execute_fails_closed_on_non_get_method), then succeeds once
+        // `Vault::grant_consent` has been called — and httpbin.org's
+        // /delete endpoint conveniently echoes request headers back in its
+        // JSON response body, which doubles as a real-world proof that
+        // the leaked credential never reaches the caller.
+        let dir = tempfile::tempdir().unwrap();
+        let keystore = crate::keychain::InMemoryKeyStore::new();
+        let vault = crate::vault::init_with_keystore(dir.path(), &keystore).unwrap();
+        let secret_value = "envy-live-test-token-do-not-leak";
+        vault.add_secret("HTTPBIN_KEY", secret_value.as_bytes()).unwrap();
+        vault
+            .grant_consent(
+                "httpbin",
+                "make_authenticated_request",
+                std::time::Duration::from_secs(300),
+                Some("test"),
+            )
+            .unwrap();
+
+        let descriptor: ProviderDescriptor = toml::from_str(
+            r#"
+id = "httpbin"
+name = "httpbin"
+domains = ["httpbin.org"]
+
+[[credentials]]
+name = "api_key"
+aliases = ["HTTPBIN_KEY"]
+auth_style = "bearer"
+"#,
+        )
+        .unwrap();
+        let registry = Registry::from_descriptors(vec![descriptor]);
+
+        let req = AuthenticatedRequest {
+            provider_id: "httpbin",
+            secret_name: "HTTPBIN_KEY",
+            method: "DELETE",
+            path: "/delete",
+            query: vec![],
+        };
+
+        let response =
+            execute(&vault, &registry, &req).expect("consent should have unblocked this non-GET call");
+        assert_eq!(response.status, 200);
+        assert!(!response.body.contains(secret_value), "secret leaked into response body");
+        assert!(response.body.contains("[REDACTED]"), "expected the echoed header to be redacted");
     }
 }

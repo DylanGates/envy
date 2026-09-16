@@ -29,6 +29,15 @@ CREATE TABLE IF NOT EXISTS audit_events (
     outcome TEXT NOT NULL,
     redaction_summary TEXT
 );
+CREATE TABLE IF NOT EXISTS consent_grants (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    provider TEXT NOT NULL,
+    operation TEXT NOT NULL,
+    granted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    expires_at TEXT NOT NULL,
+    subject TEXT,
+    revoked_at TEXT
+);
 "#;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -49,6 +58,24 @@ pub struct SecretMetadata {
     pub risk: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+}
+
+/// A time-boxed consent grant for a `(provider, operation)` pair — see
+/// `envy consent`. CLI-only: never exposed over `rpc.rs`, since consent is
+/// only meaningful if an agent can't grant it to itself.
+#[derive(Debug, Clone, Serialize)]
+pub struct ConsentGrant {
+    pub id: i64,
+    pub provider: String,
+    pub operation: String,
+    pub granted_at: String,
+    pub expires_at: String,
+    pub subject: Option<String>,
+    pub revoked_at: Option<String>,
+    /// Computed by SQLite at read time (`revoked_at IS NULL AND expires_at
+    /// > CURRENT_TIMESTAMP`) — not derived from the app clock, so it can't
+    /// drift from what `has_active_consent`/`revoke_consent` actually see.
+    pub is_active: bool,
 }
 
 /// A handle to an opened vault.
@@ -150,7 +177,98 @@ impl Vault {
             .optional()?
             .ok_or_else(|| CoreError::SecretNotFound(name.to_string()))
     }
+
+    /// Grants time-boxed consent for a `(provider, operation)` pair. The
+    /// expiry is computed by SQLite (`datetime(...)`), not the app clock,
+    /// so it isn't subject to local clock skew between grant and check.
+    pub fn grant_consent(
+        &self,
+        provider: &str,
+        operation: &str,
+        ttl: std::time::Duration,
+        subject: Option<&str>,
+    ) -> Result<ConsentGrant, CoreError> {
+        let ttl_seconds = ttl.as_secs();
+        let offset = format!("+{ttl_seconds} seconds");
+        self.conn.execute(
+            "INSERT INTO consent_grants (provider, operation, expires_at, subject)
+             VALUES (?1, ?2, datetime(CURRENT_TIMESTAMP, ?3), ?4)",
+            rusqlite::params![provider, operation, offset, subject],
+        )?;
+        let id = self.conn.last_insert_rowid();
+
+        self.conn
+            .query_row(
+                &format!("SELECT {CONSENT_GRANT_COLUMNS} FROM consent_grants WHERE id = ?1"),
+                rusqlite::params![id],
+                Self::row_to_consent_grant,
+            )
+            .map_err(CoreError::from)
+    }
+
+    /// Revokes any currently-active grant(s) for `(provider, operation)`.
+    /// Returns the number of grants revoked — 0 is not an error, it just
+    /// means there was nothing active to revoke.
+    pub fn revoke_consent(&self, provider: &str, operation: &str) -> Result<usize, CoreError> {
+        let affected = self.conn.execute(
+            "UPDATE consent_grants SET revoked_at = CURRENT_TIMESTAMP
+             WHERE provider = ?1 AND operation = ?2
+               AND revoked_at IS NULL AND expires_at > CURRENT_TIMESTAMP",
+            rusqlite::params![provider, operation],
+        )?;
+        Ok(affected)
+    }
+
+    /// True if `(provider, operation)` has a grant that hasn't expired or
+    /// been revoked. This is the check `policy::evaluate`'s caller uses.
+    pub fn has_active_consent(&self, provider: &str, operation: &str) -> Result<bool, CoreError> {
+        use rusqlite::OptionalExtension;
+
+        let active: Option<i64> = self
+            .conn
+            .query_row(
+                "SELECT 1 FROM consent_grants
+                 WHERE provider = ?1 AND operation = ?2
+                   AND revoked_at IS NULL AND expires_at > CURRENT_TIMESTAMP
+                 LIMIT 1",
+                rusqlite::params![provider, operation],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(active.is_some())
+    }
+
+    /// Lists every consent grant (active, expired, and revoked), most
+    /// recent first.
+    pub fn list_consents(&self) -> Result<Vec<ConsentGrant>, CoreError> {
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {CONSENT_GRANT_COLUMNS} FROM consent_grants ORDER BY id DESC"
+        ))?;
+        let rows = stmt.query_map([], Self::row_to_consent_grant)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(CoreError::from)
+    }
+
+    fn row_to_consent_grant(row: &rusqlite::Row) -> rusqlite::Result<ConsentGrant> {
+        Ok(ConsentGrant {
+            id: row.get(0)?,
+            provider: row.get(1)?,
+            operation: row.get(2)?,
+            granted_at: row.get(3)?,
+            expires_at: row.get(4)?,
+            subject: row.get(5)?,
+            revoked_at: row.get(6)?,
+            is_active: row.get(7)?,
+        })
+    }
 }
+
+/// Shared column list for reading a `consent_grants` row into a
+/// [`ConsentGrant`], including the SQLite-computed `is_active` flag so
+/// "is this grant currently usable" is never re-derived client-side (and
+/// so it can never drift from what `has_active_consent`/`revoke_consent`
+/// actually check).
+const CONSENT_GRANT_COLUMNS: &str = "id, provider, operation, granted_at, expires_at, subject, revoked_at, \
+     (revoked_at IS NULL AND expires_at > CURRENT_TIMESTAMP) AS is_active";
 
 /// Creates and opens the local vault under `<project_root>/.envy/`.
 ///
@@ -247,8 +365,17 @@ fn open_with_keystore(project_root: &Path, keystore: &dyn KeyStore) -> Result<Va
     // entry is missing/inaccessible).
     let key = keystore.load_key(&config.vault_id)?;
 
-    let conn = rusqlite::Connection::open(&db_path)?;
+    let mut conn = rusqlite::Connection::open(&db_path)?;
     conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;")?;
+    // Every statement in SCHEMA is `CREATE TABLE IF NOT EXISTS`, so
+    // re-running it on every open is a no-op for a vault that's already
+    // current and a forward-compatible upgrade for one created before a
+    // table (e.g. `consent_grants`) existed. Without this, a vault opened
+    // via `open()` — as opposed to freshly `init()`'d — would never pick
+    // up schema additions.
+    let tx = conn.transaction()?;
+    tx.execute_batch(SCHEMA)?;
+    tx.commit()?;
 
     Ok(Vault {
         vault_id: config.vault_id,
@@ -471,5 +598,120 @@ mod tests {
         std::fs::set_permissions(&envy_dir, std::fs::Permissions::from_mode(0o755)).unwrap();
         let result = open_with_keystore(dir.path(), &keystore);
         assert!(matches!(result, Err(CoreError::InsecurePermissions(_))));
+    }
+
+    #[test]
+    fn open_applies_schema_for_a_table_created_after_init() {
+        // Simulates a vault that predates `consent_grants`: create one,
+        // drop the table by hand, then confirm a plain `open` (not
+        // `init`) brings it back — proving `open` re-applies SCHEMA
+        // rather than only `init`'s fresh-creation path doing so.
+        let dir = tempfile::tempdir().unwrap();
+        let keystore = InMemoryKeyStore::new();
+        let vault = init_with_keystore(dir.path(), &keystore).unwrap();
+        vault.conn.execute("DROP TABLE consent_grants", []).unwrap();
+
+        let reopened = open_with_keystore(dir.path(), &keystore).unwrap();
+        let count: i64 = reopened
+            .conn
+            .query_row("SELECT COUNT(*) FROM consent_grants", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn grant_consent_then_has_active_consent_is_true() {
+        let dir = tempfile::tempdir().unwrap();
+        let keystore = InMemoryKeyStore::new();
+        let vault = init_with_keystore(dir.path(), &keystore).unwrap();
+
+        let grant = vault
+            .grant_consent("stripe", "make_authenticated_request", std::time::Duration::from_secs(300), Some("cli"))
+            .unwrap();
+        assert_eq!(grant.provider, "stripe");
+        assert_eq!(grant.operation, "make_authenticated_request");
+        assert!(grant.revoked_at.is_none());
+        assert!(
+            vault
+                .has_active_consent("stripe", "make_authenticated_request")
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn has_active_consent_is_false_for_an_expired_grant() {
+        let dir = tempfile::tempdir().unwrap();
+        let keystore = InMemoryKeyStore::new();
+        let vault = init_with_keystore(dir.path(), &keystore).unwrap();
+
+        // Grant with a TTL already in the past.
+        vault
+            .grant_consent("stripe", "make_authenticated_request", std::time::Duration::from_secs(0), None)
+            .unwrap();
+        // Zero-second TTL can land exactly on "now" depending on clock
+        // resolution; sleep past it so the comparison is unambiguous.
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        assert!(
+            !vault
+                .has_active_consent("stripe", "make_authenticated_request")
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn has_active_consent_is_false_with_no_grant() {
+        let dir = tempfile::tempdir().unwrap();
+        let keystore = InMemoryKeyStore::new();
+        let vault = init_with_keystore(dir.path(), &keystore).unwrap();
+        assert!(
+            !vault
+                .has_active_consent("stripe", "make_authenticated_request")
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn revoke_consent_makes_it_inactive_and_reports_count() {
+        let dir = tempfile::tempdir().unwrap();
+        let keystore = InMemoryKeyStore::new();
+        let vault = init_with_keystore(dir.path(), &keystore).unwrap();
+        vault
+            .grant_consent("stripe", "make_authenticated_request", std::time::Duration::from_secs(300), None)
+            .unwrap();
+
+        let revoked = vault.revoke_consent("stripe", "make_authenticated_request").unwrap();
+        assert_eq!(revoked, 1);
+        assert!(
+            !vault
+                .has_active_consent("stripe", "make_authenticated_request")
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn revoke_consent_with_nothing_active_returns_zero() {
+        let dir = tempfile::tempdir().unwrap();
+        let keystore = InMemoryKeyStore::new();
+        let vault = init_with_keystore(dir.path(), &keystore).unwrap();
+        let revoked = vault.revoke_consent("stripe", "make_authenticated_request").unwrap();
+        assert_eq!(revoked, 0);
+    }
+
+    #[test]
+    fn list_consents_returns_most_recent_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let keystore = InMemoryKeyStore::new();
+        let vault = init_with_keystore(dir.path(), &keystore).unwrap();
+        vault
+            .grant_consent("stripe", "make_authenticated_request", std::time::Duration::from_secs(300), None)
+            .unwrap();
+        vault
+            .grant_consent("openai", "make_authenticated_request", std::time::Duration::from_secs(300), None)
+            .unwrap();
+
+        let grants = vault.list_consents().unwrap();
+        assert_eq!(grants.len(), 2);
+        assert_eq!(grants[0].provider, "openai");
+        assert_eq!(grants[1].provider, "stripe");
     }
 }

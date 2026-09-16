@@ -80,6 +80,10 @@ pub fn check_adhoc(vault: &Vault, req: &AdHocCheckRequest) -> Result<CheckResult
         domain: Some(&host),
         agent_identity: None,
         method: "GET",
+        // Always GET (checking is inherently read-only, hardcoded above),
+        // so this can never affect the outcome — skip the vault lookup
+        // that `request::execute` needs for its non-GET path.
+        has_active_consent: false,
     };
     match policy::evaluate(&policy_request) {
         PolicyDecision::Allow => {}
