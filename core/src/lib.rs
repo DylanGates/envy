@@ -9,6 +9,7 @@ pub mod policy;
 pub mod provider;
 pub mod request;
 pub mod rpc;
+pub mod scanner;
 pub mod vault;
 
 pub use error::CoreError;
