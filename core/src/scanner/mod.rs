@@ -97,6 +97,12 @@ pub struct ScanResult {
     pub candidates: Vec<Candidate>,
     /// Files that could not be read (permission errors, etc.).
     pub read_errors: Vec<(PathBuf, String)>,
+    /// Every `.env`-family file recognized during the walk (per
+    /// `extract::is_env_file`), regardless of whether it produced any
+    /// candidates. Sorted for deterministic output. Lets callers warn
+    /// when more than one exists — envy has no way to know which file a
+    /// project actually loads.
+    pub env_files: Vec<PathBuf>,
 }
 
 /// Scans `root` for credential candidates.
@@ -107,14 +113,23 @@ pub struct ScanResult {
 pub fn scan(root: &Path, registry: &Registry) -> ScanResult {
     let mut candidates: Vec<Candidate> = Vec::new();
     let mut read_errors: Vec<(PathBuf, String)> = Vec::new();
-    let mut seen_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+    // Keyed on (file, var_name), not var_name alone: collapses an
+    // accidental literal repeat within one file, but no longer suppresses
+    // the same name showing up in a *different* file — that's a real
+    // finding (see `env_files`/cross-file-duplicate reporting in
+    // `src/commands/scan.rs`), not noise to hide.
+    let mut seen_names: std::collections::HashSet<(PathBuf, String)> = std::collections::HashSet::new();
+    let mut env_files: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
 
     for path in walk::walk(root) {
+        if extract::is_env_file(&path) {
+            env_files.insert(path.clone());
+        }
+
         match extract::extract_candidates(&path) {
             Ok(raw) => {
                 for raw_candidate in raw {
-                    // Deduplicate by variable name within this run.
-                    if !seen_names.insert(raw_candidate.var_name.clone()) {
+                    if !seen_names.insert((path.clone(), raw_candidate.var_name.clone())) {
                         continue;
                     }
 
@@ -143,9 +158,13 @@ pub fn scan(root: &Path, registry: &Registry) -> ScanResult {
         }
     }
 
+    let mut env_files: Vec<PathBuf> = env_files.into_iter().collect();
+    env_files.sort();
+
     ScanResult {
         candidates,
         read_errors,
+        env_files,
     }
 }
 
@@ -243,5 +262,73 @@ mod tests {
             value: b"password".to_vec(),
         };
         assert!(!c.looks_like_secret());
+    }
+
+    #[test]
+    fn scan_records_every_env_family_file_found() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(".env"), "STRIPE_KEY=sk_live_a1B2c3D4e5F6g7H8\n").unwrap();
+        std::fs::write(
+            dir.path().join(".env.production"),
+            "STRIPE_KEY=sk_live_z9Y8x7W6v5U4t3S2\n",
+        )
+        .unwrap();
+        // A non-env file should never count toward env_files.
+        std::fs::write(dir.path().join("config.toml"), "port = 8080\n").unwrap();
+
+        let registry = Registry::from_descriptors(vec![]);
+        let result = scan(dir.path(), &registry);
+
+        let mut names: Vec<String> = result
+            .env_files
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().to_string())
+            .collect();
+        names.sort();
+        assert_eq!(names, vec![".env", ".env.production"]);
+    }
+
+    #[test]
+    fn scan_surfaces_the_same_var_name_from_different_files() {
+        // Regression test: candidates used to be deduplicated by
+        // var_name alone, globally across the whole run, so the second
+        // file's value was silently dropped and never shown at all.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(".env"), "STRIPE_KEY=sk_live_a1B2c3D4e5F6g7H8\n").unwrap();
+        std::fs::write(
+            dir.path().join(".env.production"),
+            "STRIPE_KEY=sk_live_z9Y8x7W6v5U4t3S2\n",
+        )
+        .unwrap();
+
+        let registry = Registry::from_descriptors(vec![]);
+        let result = scan(dir.path(), &registry);
+
+        let stripe_candidates: Vec<&Candidate> =
+            result.candidates.iter().filter(|c| c.var_name == "STRIPE_KEY").collect();
+        assert_eq!(stripe_candidates.len(), 2, "expected one candidate per file");
+        let mut paths: Vec<String> = stripe_candidates
+            .iter()
+            .map(|c| c.path.file_name().unwrap().to_string_lossy().to_string())
+            .collect();
+        paths.sort();
+        assert_eq!(paths, vec![".env", ".env.production"]);
+    }
+
+    #[test]
+    fn scan_still_collapses_a_literal_repeat_within_one_file() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join(".env"),
+            "STRIPE_KEY=sk_live_a1B2c3D4e5F6g7H8\nSTRIPE_KEY=sk_live_a1B2c3D4e5F6g7H8\n",
+        )
+        .unwrap();
+
+        let registry = Registry::from_descriptors(vec![]);
+        let result = scan(dir.path(), &registry);
+
+        let stripe_candidates: Vec<&Candidate> =
+            result.candidates.iter().filter(|c| c.var_name == "STRIPE_KEY").collect();
+        assert_eq!(stripe_candidates.len(), 1);
     }
 }

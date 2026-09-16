@@ -42,7 +42,7 @@ pub(super) fn extract_candidates(path: &Path) -> Result<Vec<RawCandidate>, Strin
 }
 
 /// Returns true for files that use the `.env` key=value format.
-fn is_env_file(path: &Path) -> bool {
+pub(super) fn is_env_file(path: &Path) -> bool {
     let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
     // Matches: .env  .env.local  .env.production  etc.
     name == ".env"
@@ -50,53 +50,24 @@ fn is_env_file(path: &Path) -> bool {
         || path.extension().and_then(|e| e.to_str()) == Some("env")
 }
 
-/// Parses a `.env`-format file, returning one candidate per non-comment,
-/// non-empty `KEY=VALUE` line. Handles single-quoted, double-quoted,
-/// and unquoted values. Ignores shell variable expansions.
+/// Parses a `.env`-format file, returning one candidate per entry that's
+/// long enough to be worth surfacing as a scan finding. Parsing mechanics
+/// (comments, `export` prefix, quote stripping, shell-expansion
+/// skipping) live in the shared `crate::dotenv` module — this wrapper
+/// only adds the scan-specific "is this long enough to matter" filter.
+/// (`envy import --env` uses `crate::dotenv::parse` directly, with no
+/// length filter, since the user explicitly named the file.)
 fn parse_env_file(text: &str) -> Vec<RawCandidate> {
-    let mut candidates = Vec::new();
-
-    for (i, line) in text.lines().enumerate() {
-        let line = line.trim();
-
-        // Skip comments and empty lines.
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-
-        // Skip `export KEY=VALUE` prefix.
-        let line = line.strip_prefix("export ").unwrap_or(line).trim_start();
-
-        let Some(eq_pos) = line.find('=') else {
-            continue;
-        };
-        let key = line[..eq_pos].trim();
-        let raw_val = line[eq_pos + 1..].trim();
-
-        if key.is_empty() || !is_identifier(key) {
-            continue;
-        }
-
-        // Skip empty values and obvious shell expansions.
-        if raw_val.is_empty() || raw_val.starts_with('$') {
-            continue;
-        }
-
-        let value = strip_quotes(raw_val);
-
+    crate::dotenv::parse(text)
+        .into_iter()
         // Skip very short values — they're almost never secrets.
-        if value.len() < 8 {
-            continue;
-        }
-
-        candidates.push(RawCandidate {
-            line: i + 1,
-            var_name: key.to_string(),
-            value_str: value.to_string(),
-        });
-    }
-
-    candidates
+        .filter(|e| e.value.len() >= 8)
+        .map(|e| RawCandidate {
+            line: e.line,
+            var_name: e.key,
+            value_str: e.value,
+        })
+        .collect()
 }
 
 /// Scans a generic source or config file line by line, looking for
@@ -163,32 +134,11 @@ fn extract_assignment(line: &str, line_num: usize) -> Option<RawCandidate> {
     })
 }
 
-/// True when `s` looks like a shell identifier: letters, digits, underscores,
-/// starting with a letter or underscore.
-fn is_identifier(s: &str) -> bool {
-    let mut chars = s.chars();
-    match chars.next() {
-        Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
-        _ => return false,
-    }
-    chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
-}
-
 /// True when `s` is UPPER_SNAKE_CASE (all uppercase letters, digits, underscores).
 fn is_upper_snake(s: &str) -> bool {
     !s.is_empty()
         && s.chars()
             .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
-}
-
-/// Strips surrounding single or double quotes from a value string.
-fn strip_quotes(s: &str) -> &str {
-    if s.len() >= 2 {
-        if (s.starts_with('"') && s.ends_with('"')) || (s.starts_with('\'') && s.ends_with('\'')) {
-            return &s[1..s.len() - 1];
-        }
-    }
-    s
 }
 
 #[cfg(test)]

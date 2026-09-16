@@ -168,7 +168,10 @@ pub enum Confidence {
     High,
 }
 
-fn user_provider_dir() -> Option<PathBuf> {
+/// The directory `Registry::load()` scans for user-authored `*.toml`
+/// descriptors — also `envy provider install`'s copy destination
+/// (`src/commands/provider.rs`, in the `cli` crate).
+pub fn user_provider_dir() -> Option<PathBuf> {
     ProjectDirs::from("dev", "envy", "envy").map(|dirs| dirs.data_dir().join("providers"))
 }
 
