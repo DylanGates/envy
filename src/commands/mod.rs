@@ -1,5 +1,7 @@
 mod add;
 mod check;
+mod consent;
+mod doctor;
 mod export;
 mod expose;
 mod import;
@@ -37,10 +39,14 @@ pub fn dispatch(cli: Cli) -> anyhow::Result<()> {
         Commands::Run { command } => run::run(command, global),
         Commands::Expose { action } => expose::run(action, global),
         Commands::Log { project } => log::run(project, global),
-        Commands::Export { encrypted } => export::run(encrypted, global),
-        Commands::Import { encrypted } => import::run(encrypted, global),
+        Commands::Export { encrypted, env, example, force } => {
+            export::run(encrypted, env, example, force, global)
+        }
+        Commands::Import { encrypted, env } => import::run(encrypted, env, global),
         Commands::Provider { action } => provider::run(action, global),
         Commands::Mcp { action } => mcp::run(action, global),
+        Commands::Consent { action } => consent::run(action, global),
+        Commands::Doctor => doctor::run(global),
     }
 }
 

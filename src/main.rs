@@ -1,5 +1,6 @@
 mod cli;
 mod commands;
+mod mcp_clients;
 
 use std::process::ExitCode;
 
