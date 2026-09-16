@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use anyhow::Context;
 use envy_core::provider::descriptor::ProviderDescriptor;
 
 use crate::cli::{GlobalArgs, ProviderAction};
@@ -7,16 +8,22 @@ use crate::cli::{GlobalArgs, ProviderAction};
 pub fn run(action: ProviderAction, global: &GlobalArgs) -> anyhow::Result<()> {
     match action {
         ProviderAction::Validate { path } => validate(path, global),
+        ProviderAction::Install { path, force } => install(path, force, global),
+        ProviderAction::List => list(global),
     }
 }
 
-fn validate(path: PathBuf, global: &GlobalArgs) -> anyhow::Result<()> {
-    let source = std::fs::read_to_string(&path)
+fn parse_descriptor(path: &std::path::Path) -> anyhow::Result<ProviderDescriptor> {
+    let source = std::fs::read_to_string(path)
         .map_err(|e| anyhow::anyhow!("could not read {}: {e}", path.display()))?;
+    toml::from_str(&source)
+        .map_err(|e| anyhow::anyhow!("TOML parse error in {}: {e}", path.display()))
+}
 
-    let descriptor: ProviderDescriptor = toml::from_str(&source)
-        .map_err(|e| anyhow::anyhow!("TOML parse error in {}: {e}", path.display()))?;
-
+/// Checks a parsed descriptor's shape. Shared by `validate` and `install`
+/// so installing always applies the exact same checks — `install` fails
+/// closed on any error, same as `validate` does.
+fn check_descriptor(descriptor: &ProviderDescriptor) -> (Vec<String>, Vec<String>) {
     let mut errors: Vec<String> = Vec::new();
     let mut warnings: Vec<String> = Vec::new();
 
@@ -133,7 +140,12 @@ fn validate(path: PathBuf, global: &GlobalArgs) -> anyhow::Result<()> {
         }
     }
 
-    // ── output ───────────────────────────────────────────────────────────────
+    (errors, warnings)
+}
+
+fn validate(path: PathBuf, global: &GlobalArgs) -> anyhow::Result<()> {
+    let descriptor = parse_descriptor(&path)?;
+    let (errors, warnings) = check_descriptor(&descriptor);
     let ok = errors.is_empty();
 
     if global.json {
@@ -166,6 +178,106 @@ fn validate(path: PathBuf, global: &GlobalArgs) -> anyhow::Result<()> {
 
     if !ok {
         anyhow::bail!("descriptor validation failed");
+    }
+    Ok(())
+}
+
+fn install(path: PathBuf, force: bool, global: &GlobalArgs) -> anyhow::Result<()> {
+    let descriptor = parse_descriptor(&path)?;
+    let (errors, warnings) = check_descriptor(&descriptor);
+
+    if !global.quiet {
+        for w in &warnings {
+            println!("  ⚠  {w}");
+        }
+    }
+    if !errors.is_empty() {
+        for e in &errors {
+            eprintln!("  ✗  {e}");
+        }
+        anyhow::bail!("descriptor validation failed — fix the errors above before installing");
+    }
+
+    let dir = envy_core::provider::user_provider_dir()
+        .context("could not determine envy's provider directory (no home directory found)")?;
+    std::fs::create_dir_all(&dir).with_context(|| format!("failed to create {}", dir.display()))?;
+
+    let dest = dir.join(format!("{}.toml", descriptor.id));
+    if dest.exists() {
+        if !force {
+            anyhow::bail!(
+                "{} is already installed at {} — pass --force to overwrite (backs it up to \
+                 <file>.bak first)",
+                descriptor.id,
+                dest.display()
+            );
+        }
+        let backup = PathBuf::from(format!("{}.bak", dest.display()));
+        std::fs::copy(&dest, &backup)
+            .with_context(|| format!("failed to back up {} to {}", dest.display(), backup.display()))?;
+    }
+
+    std::fs::copy(&path, &dest)
+        .with_context(|| format!("failed to copy {} to {}", path.display(), dest.display()))?;
+
+    if global.json {
+        println!(
+            r#"{{"status":"ok","id":"{}","installed_at":"{}"}}"#,
+            descriptor.id,
+            dest.display()
+        );
+    } else if !global.quiet {
+        println!("Installed provider '{}' at {}", descriptor.id, dest.display());
+    }
+    Ok(())
+}
+
+fn list(global: &GlobalArgs) -> anyhow::Result<()> {
+    let (registry, warnings) = envy_core::provider::Registry::load()?;
+    let descriptors = registry.descriptors();
+
+    if global.json {
+        let providers: Vec<_> = descriptors
+            .iter()
+            .map(|d| {
+                serde_json::json!({
+                    "id": d.id,
+                    "name": d.name,
+                    "domains": d.domains,
+                    "credentials": d.credentials.iter().map(|c| &c.name).collect::<Vec<_>>(),
+                })
+            })
+            .collect();
+        let warnings_json: Vec<_> = warnings
+            .iter()
+            .map(|w| serde_json::json!({"path": w.path.display().to_string(), "message": w.message}))
+            .collect();
+        println!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({"providers": providers, "warnings": warnings_json}))?
+        );
+        return Ok(());
+    }
+
+    if !global.quiet {
+        if let Some(dir) = envy_core::provider::user_provider_dir() {
+            println!("Provider directory: {}\n", dir.display());
+        }
+        for w in &warnings {
+            println!("  ⚠  ignoring invalid descriptor at {}: {}", w.path.display(), w.message);
+        }
+        if descriptors.is_empty() {
+            println!("No providers installed.");
+        }
+        for d in descriptors {
+            println!(
+                "{}  ({})  domains={}  credentials={}",
+                d.id,
+                d.name,
+                d.domains.join(","),
+                d.credentials.iter().map(|c| c.name.as_str()).collect::<Vec<_>>().join(","),
+            );
+        }
     }
     Ok(())
 }

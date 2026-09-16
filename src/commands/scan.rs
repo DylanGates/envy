@@ -44,8 +44,23 @@ pub fn run(path: Option<PathBuf>, global: &GlobalArgs) -> anyhow::Result<()> {
         .filter(|c| c.looks_like_secret())
         .collect();
 
+    // Group findings by variable name to spot the same name defined in
+    // more than one .env-family file — envy used to silently drop every
+    // occurrence but the first, so this was previously invisible.
+    let cross_file_duplicates: Vec<(&str, Vec<&std::path::Path>)> = {
+        let mut by_name: std::collections::BTreeMap<&str, Vec<&std::path::Path>> =
+            std::collections::BTreeMap::new();
+        for c in &findings {
+            let paths = by_name.entry(c.var_name.as_str()).or_default();
+            if !paths.contains(&c.path.as_path()) {
+                paths.push(c.path.as_path());
+            }
+        }
+        by_name.into_iter().filter(|(_, paths)| paths.len() > 1).collect()
+    };
+
     if global.json {
-        let json: Vec<_> = findings
+        let findings_json: Vec<_> = findings
             .iter()
             .map(|c| {
                 serde_json::json!({
@@ -61,8 +76,53 @@ pub fn run(path: Option<PathBuf>, global: &GlobalArgs) -> anyhow::Result<()> {
                 })
             })
             .collect();
-        println!("{}", serde_json::to_string(&json)?);
+        let env_files_json: Vec<String> =
+            result.env_files.iter().map(|p| p.display().to_string()).collect();
+        let cross_file_duplicates_json: Vec<_> = cross_file_duplicates
+            .iter()
+            .map(|(var_name, paths)| {
+                serde_json::json!({
+                    "var_name": var_name,
+                    "paths": paths.iter().map(|p| p.display().to_string()).collect::<Vec<_>>(),
+                })
+            })
+            .collect();
+        println!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "findings": findings_json,
+                "env_files": env_files_json,
+                "cross_file_duplicates": cross_file_duplicates_json,
+            }))?
+        );
         return Ok(());
+    }
+
+    if result.env_files.len() > 1 {
+        if !global.quiet {
+            let names: Vec<String> =
+                result.env_files.iter().map(|p| p.display().to_string()).collect();
+            println!(
+                "⚠  {} .env-family files found: {} — envy can't tell which one your app \
+                 actually loads; review this before assuming secrets are only in one place.\n",
+                result.env_files.len(),
+                names.join(", ")
+            );
+        }
+    }
+
+    if !cross_file_duplicates.is_empty() {
+        if !global.quiet {
+            for (var_name, paths) in &cross_file_duplicates {
+                let names: Vec<String> = paths.iter().map(|p| p.display().to_string()).collect();
+                println!(
+                    "⚠  '{var_name}' is defined in more than one file: {} — values may differ; \
+                     envy imports each one under the same vault name, so only the first import \
+                     wins.\n",
+                    names.join(", ")
+                );
+            }
+        }
     }
 
     if findings.is_empty() {

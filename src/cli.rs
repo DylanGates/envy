@@ -119,18 +119,44 @@ pub enum Commands {
         project: Option<PathBuf>,
     },
 
-    /// Export the vault as an encrypted backup file.
+    /// Export the vault as an encrypted backup file, write a plaintext
+    /// .env file's worth of secrets, or write a names-only .env.example.
     Export {
-        /// Destination file for the encrypted export.
+        /// Destination file for an encrypted whole-vault backup.
         #[arg(long)]
-        encrypted: PathBuf,
+        encrypted: Option<PathBuf>,
+
+        /// Write vault secrets as a plaintext .env file instead of an
+        /// encrypted backup. Optional value: defaults to ".env" if given
+        /// with no filename.
+        #[arg(long, num_args = 0..=1, default_missing_value = ".env")]
+        env: Option<PathBuf>,
+
+        /// Write a names-only .env.example (every vault secret's name,
+        /// no values) so agents/humans can see what variables a project
+        /// expects without ever exposing a value. Optional value:
+        /// defaults to ".env.example" if given with no filename.
+        #[arg(long, num_args = 0..=1, default_missing_value = ".env.example")]
+        example: Option<PathBuf>,
+
+        /// Overwrite an existing destination file (backs it up to
+        /// `<file>.bak` first). Applies to `--env` and `--example`.
+        #[arg(long)]
+        force: bool,
     },
 
-    /// Restore the vault from an encrypted backup file.
+    /// Restore the vault from an encrypted backup file, or import a
+    /// plaintext .env file's key=value pairs into the vault.
     Import {
-        /// Source file to restore from.
+        /// Source file to restore from (encrypted whole-vault backup).
         #[arg(long)]
-        encrypted: PathBuf,
+        encrypted: Option<PathBuf>,
+
+        /// Read a plaintext .env file and import its key=value pairs
+        /// into the vault instead of restoring an encrypted backup.
+        /// Optional value: defaults to ".env" if given with no filename.
+        #[arg(long, num_args = 0..=1, default_missing_value = ".env")]
+        env: Option<PathBuf>,
     },
 
     /// Manage and validate provider descriptors.
@@ -144,6 +170,50 @@ pub enum Commands {
         #[command(subcommand)]
         action: McpAction,
     },
+
+    /// Grant, revoke, or list time-boxed consent for provider-facing
+    /// operations that aren't plain reads (e.g. a non-GET
+    /// `make_authenticated_request`). CLI-only — never exposed to agents,
+    /// since consent only means something if an agent can't grant it to
+    /// itself.
+    Consent {
+        #[command(subcommand)]
+        action: ConsentAction,
+    },
+
+    /// Run local diagnostics: vault init, keychain round-trip, schema
+    /// check. Uses a throwaway vault and keychain entry — never touches a
+    /// real project's vault.
+    Doctor,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ConsentAction {
+    /// Grant time-boxed consent for a provider + operation.
+    Grant {
+        /// The provider id (e.g. "stripe").
+        provider: String,
+
+        /// The operation being consented to (e.g.
+        /// "make_authenticated_request").
+        operation: String,
+
+        /// How long the grant stays active, e.g. "30s", "5m", "1h", "2d".
+        #[arg(long, default_value = "5m")]
+        ttl: String,
+    },
+
+    /// Revoke any active consent for a provider + operation.
+    Revoke {
+        /// The provider id (e.g. "stripe").
+        provider: String,
+
+        /// The operation to revoke consent for.
+        operation: String,
+    },
+
+    /// List consent grants (active, expired, and revoked).
+    List,
 }
 
 mod provider {
@@ -157,13 +227,66 @@ mod provider {
             /// Path to the .toml descriptor to validate.
             path: PathBuf,
         },
+
+        /// Validate and install a provider descriptor into envy's provider
+        /// directory, so `envy scan`/`check`/`make_authenticated_request`
+        /// pick it up without a recompile.
+        Install {
+            /// Path to the .toml descriptor to install.
+            path: PathBuf,
+
+            /// Overwrite an already-installed descriptor with the same id
+            /// (backs it up to `<file>.bak` first).
+            #[arg(long)]
+            force: bool,
+        },
+
+        /// List installed provider descriptors.
+        List,
     }
 }
 
 #[derive(Debug, Subcommand)]
 pub enum ExposeAction {
-    /// Install the capability gateway for the current environment.
-    Install,
+    /// Write envy's MCP server into an AI client's config so it can
+    /// connect without hand-editing JSON/TOML.
+    Install {
+        /// Which client to install for.
+        #[arg(long, value_enum)]
+        client: McpClientArg,
+
+        /// Where to write the config: this project only, or the client's
+        /// global config. Defaults to project where the client supports it.
+        #[arg(long, value_enum)]
+        scope: Option<ScopeArg>,
+
+        /// Path to the MCP adapter's compiled entry point (cli/mcp/dist/index.js).
+        /// Overrides envy's own auto-resolution, which only works in a
+        /// dev/source checkout today (no packaged distribution exists yet).
+        #[arg(long)]
+        mcp_entry: Option<PathBuf>,
+
+        /// Overwrite an existing "envy" entry in the client's config
+        /// (backs up the whole config file to `<file>.bak` first).
+        #[arg(long)]
+        force: bool,
+    },
+}
+
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+pub enum McpClientArg {
+    ClaudeCode,
+    ClaudeDesktop,
+    Cursor,
+    Codex,
+    Pi,
+    Agy,
+}
+
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+pub enum ScopeArg {
+    Project,
+    Global,
 }
 
 #[derive(Debug, Subcommand)]
