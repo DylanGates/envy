@@ -138,7 +138,7 @@ pub fn execute(
 /// relative path, then verifies the resulting host is within `domains`.
 /// This is the security boundary that prevents steering authenticated
 /// requests at an arbitrary host (see `docs/intent.md`).
-fn build_url(
+pub(crate) fn build_url(
     domains: &[String],
     path: &str,
     query: &[(String, String)],
@@ -185,7 +185,7 @@ fn auth_headers(cred: &CredentialDescriptor, secret_value: &str) -> Vec<(String,
 /// Maps an HTTP status to a provider-defined envy status word using the
 /// first health check's `status_mapping`. Returns `"unknown"` when no
 /// mapping is configured — never treats an unmapped status as invalid.
-fn map_status(descriptor: &ProviderDescriptor, status: u16) -> &str {
+pub(crate) fn map_status(descriptor: &ProviderDescriptor, status: u16) -> &str {
     descriptor
         .health_checks
         .first()

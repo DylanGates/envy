@@ -83,9 +83,9 @@ pub enum Commands {
         #[arg(long)]
         project: Option<PathBuf>,
 
-        /// Ad-hoc mode: the URL to call for this check (no cataloged
-        /// provider needed — this URL is your explicit approval for the
-        /// one call it makes).
+        /// Ad-hoc mode (level 4): the URL to call for this check (no
+        /// cataloged provider needed — this URL is your explicit approval
+        /// for the one call it makes). Mutually exclusive with --provider.
         #[arg(long)]
         url: Option<String>,
 
@@ -97,6 +97,13 @@ pub enum Commands {
         /// Ad-hoc mode: header name to use when --auth-style=header.
         #[arg(long = "header-name")]
         header_name: Option<String>,
+
+        /// Cataloged mode (level 1): an installed provider id (see `envy
+        /// provider list`) — runs that provider's own verified health
+        /// check instead of a caller-supplied URL. Mutually exclusive
+        /// with --url.
+        #[arg(long)]
+        provider: Option<String>,
     },
 
     /// Run a command with resolved credentials injected into its environment.

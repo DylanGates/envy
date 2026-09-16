@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::check::{self, AdHocCheckRequest};
+use crate::check::{self, AdHocCheckRequest, CatalogedCheckRequest};
 use crate::error::CoreError;
 use crate::provider::Registry;
 use crate::request::{self, AuthenticatedRequest};
@@ -174,11 +174,18 @@ fn handle_make_authenticated_request(request: &Request, ctx: &RpcContext) -> Res
 struct CheckCredentialParams {
     #[serde(rename = "secretName")]
     secret_name: String,
-    url: String,
+    /// Ad-hoc mode (level 4): the URL to call. Mutually exclusive with
+    /// `provider`.
+    url: Option<String>,
     #[serde(rename = "authStyle")]
-    auth_style: String,
+    auth_style: Option<String>,
     #[serde(rename = "headerName")]
     header_name: Option<String>,
+    /// Cataloged mode (level 1): an installed provider id. Mutually
+    /// exclusive with `url`. A cataloged provider's domain was already
+    /// reviewed at `envy provider validate`/`install` time, so this is
+    /// arguably the more trustworthy of the two modes for an agent to use.
+    provider: Option<String>,
 }
 
 fn handle_check_credential(request: &Request, ctx: &RpcContext) -> Response {
@@ -200,24 +207,60 @@ fn handle_check_credential(request: &Request, ctx: &RpcContext) -> Response {
         }
     };
 
-    let req = AdHocCheckRequest {
-        subject: "mcp-adapter",
-        secret_name: &params.secret_name,
-        url: &params.url,
-        auth_style: &params.auth_style,
-        header_name: params.header_name.as_deref(),
+    let result = match (&params.provider, &params.url) {
+        (Some(_), Some(_)) => {
+            return Response::error(
+                request.id.clone(),
+                INVALID_PARAMS,
+                "pass either \"url\" (ad-hoc) or \"provider\" (cataloged), not both",
+            );
+        }
+        (None, None) => {
+            return Response::error(
+                request.id.clone(),
+                INVALID_PARAMS,
+                "pass either \"url\" (ad-hoc) or \"provider\" (cataloged)",
+            );
+        }
+        (Some(provider_id), None) => {
+            let req = CatalogedCheckRequest {
+                subject: "mcp-adapter",
+                secret_name: &params.secret_name,
+                provider_id,
+            };
+            check::check_cataloged(&vault, &ctx.registry, &req)
+        }
+        (None, Some(url)) => {
+            let Some(auth_style) = params.auth_style.as_deref() else {
+                return Response::error(
+                    request.id.clone(),
+                    INVALID_PARAMS,
+                    "\"authStyle\" is required when \"url\" is given",
+                );
+            };
+            let req = AdHocCheckRequest {
+                subject: "mcp-adapter",
+                secret_name: &params.secret_name,
+                url,
+                auth_style,
+                header_name: params.header_name.as_deref(),
+            };
+            check::check_adhoc(&vault, &req)
+        }
     };
 
-    match check::check_adhoc(&vault, &req) {
+    match result {
         Ok(result) => Response::result(
             request.id.clone(),
             serde_json::json!({
                 "status": result.status.as_str(),
                 "httpStatus": result.http_status,
+                "detail": result.detail,
             }),
         ),
         Err(e) => {
             let code = match &e {
+                CoreError::ProviderNotFound(_) => ERR_PROVIDER_NOT_FOUND,
                 CoreError::SecretNotFound(_) => ERR_SECRET_NOT_FOUND,
                 CoreError::RequestBlocked(_) => ERR_REQUEST_BLOCKED,
                 CoreError::ConsentRequired(_) => ERR_CONSENT_REQUIRED,
@@ -375,6 +418,41 @@ mod tests {
         let response = handle(&request_with_params(7, "check_credential", params), &ctx);
         let error = response.error.expect("expected an error");
         assert_eq!(error.code, ERR_REQUEST_BLOCKED);
+    }
+
+    #[test]
+    fn check_credential_with_neither_url_nor_provider_is_rejected() {
+        let (_dir, ctx) = test_context();
+        let params = serde_json::json!({"secretName": "KEY"});
+        let response = handle(&request_with_params(8, "check_credential", params), &ctx);
+        let error = response.error.expect("expected an error");
+        assert_eq!(error.code, INVALID_PARAMS);
+    }
+
+    #[test]
+    fn check_credential_with_both_url_and_provider_is_rejected() {
+        let (_dir, ctx) = test_context();
+        let params = serde_json::json!({
+            "secretName": "KEY",
+            "url": "https://example.com/me",
+            "authStyle": "bearer",
+            "provider": "stripe",
+        });
+        let response = handle(&request_with_params(9, "check_credential", params), &ctx);
+        let error = response.error.expect("expected an error");
+        assert_eq!(error.code, INVALID_PARAMS);
+    }
+
+    #[test]
+    fn check_credential_with_unknown_provider_returns_mapped_error() {
+        let (_dir, ctx) = test_context();
+        let params = serde_json::json!({
+            "secretName": "KEY",
+            "provider": "not-a-real-provider",
+        });
+        let response = handle(&request_with_params(10, "check_credential", params), &ctx);
+        let error = response.error.expect("expected an error");
+        assert_eq!(error.code, ERR_PROVIDER_NOT_FOUND);
     }
 
     #[test]
