@@ -9,3 +9,5 @@ anyhow = "1"
 envy-core = { path = "core" }
 rpassword = "7"
 interprocess = "2"
+serde_json = "1"
+toml = "0.8"

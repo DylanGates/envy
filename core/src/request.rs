@@ -8,7 +8,8 @@ use std::time::Duration;
 
 use crate::error::CoreError;
 use crate::policy::{self, PolicyDecision, PolicyRequest};
-use crate::provider::{ProviderDescriptor, Registry};
+use crate::provider::Registry;
+use crate::provider::descriptor::{CredentialDescriptor, ProviderDescriptor};
 use crate::vault::Vault;
 
 pub struct AuthenticatedRequest<'a> {
@@ -37,16 +38,28 @@ pub fn execute(
         .find(|d| d.id == req.provider_id)
         .ok_or_else(|| CoreError::ProviderNotFound(req.provider_id.to_string()))?;
 
+    // Use the first credential descriptor. Future work: callers may
+    // specify a credential name to select from multiple kinds on the same
+    // provider (e.g. "api_key" vs "webhook_secret").
+    let cred = descriptor.credentials.first().ok_or_else(|| {
+        CoreError::InvalidRequest(format!(
+            "provider '{}' has no credentials configured",
+            req.provider_id
+        ))
+    })?;
+
     let policy_request = PolicyRequest {
         operation: "make_authenticated_request",
         provider: Some(&descriptor.id),
-        domain: descriptor.network.allowed_domains.first().map(String::as_str),
+        domain: descriptor.domains.first().map(String::as_str),
         agent_identity: None,
         method: req.method,
     };
     match policy::evaluate(&policy_request) {
         PolicyDecision::Allow => {}
-        PolicyDecision::RequireConsent { reason } => return Err(CoreError::ConsentRequired(reason)),
+        PolicyDecision::RequireConsent { reason } => {
+            return Err(CoreError::ConsentRequired(reason));
+        }
         PolicyDecision::Deny { reason } => return Err(CoreError::PolicyDenied(reason)),
     }
 
@@ -54,8 +67,8 @@ pub fn execute(
     let secret_value = String::from_utf8(secret_value)
         .map_err(|_| CoreError::Http("stored credential is not valid UTF-8".to_string()))?;
 
-    let url = build_url(descriptor, req.path, &req.query)?;
-    let headers = auth_headers(descriptor, &secret_value);
+    let url = build_url(&descriptor.domains, req.path, &req.query)?;
+    let headers = auth_headers(cred, &secret_value);
 
     let config = ureq::Agent::config_builder()
         .http_status_as_error(false)
@@ -86,7 +99,11 @@ pub fn execute(
         .read_to_string()
         .map_err(|e| CoreError::Http(format!("failed to read response body: {e}")))?;
 
-    let outcome = if (200..300).contains(&status) { "success" } else { "error" };
+    let outcome = if (200..300).contains(&status) {
+        "success"
+    } else {
+        "error"
+    };
     vault.log_event(&crate::audit::AuditEvent {
         subject: Some("mcp-adapter"),
         project: None,
@@ -104,17 +121,20 @@ pub fn execute(
     })
 }
 
-/// Builds the target URL from the descriptor's `base_url` + a
-/// caller-supplied path and query, then verifies the resulting host is
-/// in `allowed_domains` — the security boundary preventing a caller from
-/// steering an "authenticated" request at an arbitrary host.
+/// Builds a URL from the provider's domain list and a caller-supplied
+/// relative path, then verifies the resulting host is within `domains`.
+/// This is the security boundary that prevents steering authenticated
+/// requests at an arbitrary host (see `docs/intent.md`).
 fn build_url(
-    descriptor: &ProviderDescriptor,
+    domains: &[String],
     path: &str,
     query: &[(String, String)],
 ) -> Result<url::Url, CoreError> {
-    let base = url::Url::parse(&descriptor.network.base_url)
-        .map_err(|e| CoreError::Http(format!("invalid base_url in descriptor: {e}")))?;
+    let domain = domains
+        .first()
+        .ok_or_else(|| CoreError::Http("provider has no configured domains".to_string()))?;
+    let base = url::Url::parse(&format!("https://{domain}/"))
+        .map_err(|e| CoreError::Http(format!("invalid domain in descriptor: {e}")))?;
     let mut joined = base
         .join(path.trim_start_matches('/'))
         .map_err(|e| CoreError::RequestBlocked(format!("invalid path '{path}': {e}")))?;
@@ -129,31 +149,34 @@ fn build_url(
     let host = joined
         .host_str()
         .ok_or_else(|| CoreError::RequestBlocked("URL has no host".to_string()))?;
-    if !descriptor.network.allowed_domains.iter().any(|d| d == host) {
+    if !domains.iter().any(|d| d == host) {
         return Err(CoreError::RequestBlocked(format!(
-            "host '{host}' is not in this provider's allowed_domains"
+            "host '{host}' is not in this provider's allowed domains"
         )));
     }
 
     Ok(joined)
 }
 
-/// Builds the headers that inject the credential, per the descriptor's
-/// `auth.style`.
-fn auth_headers(descriptor: &ProviderDescriptor, secret_value: &str) -> Vec<(String, String)> {
+/// Builds the headers that inject the credential, per the credential
+/// descriptor's `auth_style`.
+fn auth_headers(cred: &CredentialDescriptor, secret_value: &str) -> Vec<(String, String)> {
     crate::auth::build_auth_headers(
-        &descriptor.auth.style,
-        descriptor.auth.header_name.as_deref(),
-        &descriptor.auth.extra_headers,
+        &cred.auth_style,
+        cred.header_name.as_deref(),
+        &cred.extra_headers,
         secret_value,
     )
 }
 
+/// Maps an HTTP status to a provider-defined envy status word using the
+/// first health check's `status_mapping`. Returns `"unknown"` when no
+/// mapping is configured — never treats an unmapped status as invalid.
 fn map_status(descriptor: &ProviderDescriptor, status: u16) -> &str {
     descriptor
-        .health_check
-        .status_mapping
-        .get(&status.to_string())
+        .health_checks
+        .first()
+        .and_then(|hc| hc.status_mapping.get(&status.to_string()))
         .map(String::as_str)
         .unwrap_or("unknown")
 }
@@ -169,58 +192,49 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
 
-    // No bundled provider files exist right now (removed to be rebuilt
-    // under the array-based schema in docs/provider-testing-vision.md),
-    // so these tests build minimal descriptors inline instead of reading
-    // real provider `.toml` files.
-
+    // Inline test fixtures using the array-based schema
+    // (docs/provider-testing-vision.md §"Schema evolution").
     const STRIPE_LIKE: &str = r#"
 id = "stripe"
 name = "Stripe"
-[detection]
+domains = ["api.stripe.com"]
+
+[[credentials]]
+name = "api_key"
 aliases = ["STRIPE_SECRET_KEY", "STRIPE_API_KEY", "STRIPE_KEY"]
 prefixes = ["sk_live_", "sk_test_"]
-[credential]
-kind = "api_key"
+auth_style = "bearer"
 risk = "high"
-[network]
-base_url = "https://api.stripe.com"
-allowed_domains = ["api.stripe.com"]
-[auth]
-style = "bearer"
-[health_check]
+
+[[health_checks]]
+id = "balance"
 method = "GET"
-url = "https://api.stripe.com/v1/balance"
-[health_check.status_mapping]
-"200" = "valid"
-"401" = "invalid"
-[redaction]
-fields = ["Authorization"]
-[docs]
+path = "/v1/balance"
+safe = true
+success_statuses = [200]
+status_mapping = { "200" = "valid", "401" = "invalid" }
 "#;
 
     const ANTHROPIC_LIKE: &str = r#"
 id = "anthropic"
 name = "Anthropic"
-[detection]
+domains = ["api.anthropic.com"]
+
+[[credentials]]
+name = "api_key"
 aliases = ["ANTHROPIC_API_KEY"]
 prefixes = ["sk-ant-"]
-[credential]
-kind = "api_key"
-risk = "high"
-[network]
-base_url = "https://api.anthropic.com"
-allowed_domains = ["api.anthropic.com"]
-[auth]
-style = "header"
+auth_style = "header"
 header_name = "x-api-key"
 extra_headers = { "anthropic-version" = "2023-06-01" }
-[health_check]
+risk = "high"
+
+[[health_checks]]
+id = "models"
 method = "GET"
-url = "https://api.anthropic.com/v1/models"
-[redaction]
-fields = ["x-api-key"]
-[docs]
+path = "/v1/models"
+safe = true
+success_statuses = [200]
 "#;
 
     fn stripe_descriptor() -> ProviderDescriptor {
@@ -232,50 +246,61 @@ fields = ["x-api-key"]
     }
 
     #[test]
-    fn build_url_joins_base_and_path_with_query() {
-        let descriptor = stripe_descriptor();
-        let url = build_url(&descriptor, "/v1/balance", &[("expand".to_string(), "a".to_string())]).unwrap();
+    fn build_url_joins_domain_and_path_with_query() {
+        let domains = vec!["api.stripe.com".to_string()];
+        let url = build_url(
+            &domains,
+            "/v1/balance",
+            &[("expand".to_string(), "a".to_string())],
+        )
+        .unwrap();
         assert_eq!(url.as_str(), "https://api.stripe.com/v1/balance?expand=a");
     }
 
     #[test]
     fn build_url_rejects_host_outside_allowed_domains() {
-        let descriptor = stripe_descriptor();
-        // Absolute-URL-shaped "path" attempting to escape to another host.
-        let result = build_url(&descriptor, "https://evil.example.com/steal", &[]);
+        let domains = vec!["api.stripe.com".to_string()];
+        // An absolute URL as path must not escape to another host.
+        let result = build_url(&domains, "https://evil.example.com/steal", &[]);
         assert!(matches!(result, Err(CoreError::RequestBlocked(_))));
     }
 
     #[test]
     fn build_url_rejects_path_traversal_out_of_the_provider() {
-        let descriptor = stripe_descriptor();
-        let result = build_url(&descriptor, "../../evil.example.com/", &[]);
-        // Either blocked outright, or resolves back onto api.stripe.com
-        // (the only host build_url is allowed to keep) — never anything
-        // else.
+        let domains = vec!["api.stripe.com".to_string()];
+        let result = build_url(&domains, "../../evil.example.com/", &[]);
+        // Either blocked outright or resolves onto api.stripe.com — never
+        // onto any other host.
         if let Ok(url) = result {
             assert_eq!(url.host_str(), Some("api.stripe.com"));
         }
     }
 
-    // Full auth-header-building coverage (bearer, header style, extra
-    // headers, unknown-style fallback) lives in `auth.rs`'s own tests,
-    // against the generic function this wrapper delegates to. These two
-    // just confirm the wrapper passes the right descriptor fields through.
     #[test]
-    fn auth_headers_wraps_bearer_style_descriptor() {
+    fn auth_headers_wraps_bearer_style_credential() {
         let descriptor = stripe_descriptor();
-        let headers = auth_headers(&descriptor, "sk_live_abc123");
-        assert_eq!(headers, vec![("Authorization".to_string(), "Bearer sk_live_abc123".to_string())]);
+        let cred = descriptor.credentials.first().unwrap();
+        let headers = auth_headers(cred, "sk_live_abc123");
+        assert_eq!(
+            headers,
+            vec![(
+                "Authorization".to_string(),
+                "Bearer sk_live_abc123".to_string()
+            )]
+        );
     }
 
     #[test]
-    fn auth_headers_wraps_header_style_descriptor_with_extra_headers() {
+    fn auth_headers_wraps_header_style_credential_with_extra_headers() {
         let descriptor = anthropic_descriptor();
-        let headers = auth_headers(&descriptor, "sk-ant-abc123");
+        let cred = descriptor.credentials.first().unwrap();
+        let headers = auth_headers(cred, "sk-ant-abc123");
         let map: HashMap<_, _> = headers.into_iter().collect();
         assert_eq!(map.get("x-api-key"), Some(&"sk-ant-abc123".to_string()));
-        assert_eq!(map.get("anthropic-version"), Some(&"2023-06-01".to_string()));
+        assert_eq!(
+            map.get("anthropic-version"),
+            Some(&"2023-06-01".to_string())
+        );
     }
 
     #[test]
@@ -284,6 +309,27 @@ fields = ["x-api-key"]
         assert_eq!(map_status(&descriptor, 200), "valid");
         assert_eq!(map_status(&descriptor, 401), "invalid");
         assert_eq!(map_status(&descriptor, 999), "unknown");
+    }
+
+    #[test]
+    fn map_status_returns_unknown_when_no_health_checks_configured() {
+        // A provider with no health checks should not panic — unknown is
+        // the safe default (never report invalid without evidence).
+        let descriptor: ProviderDescriptor = toml::from_str(
+            r#"
+id = "bare"
+name = "Bare"
+domains = ["api.bare.com"]
+
+[[credentials]]
+name = "api_key"
+aliases = ["BARE_KEY"]
+auth_style = "bearer"
+"#,
+        )
+        .unwrap();
+        assert_eq!(map_status(&descriptor, 200), "unknown");
+        assert_eq!(map_status(&descriptor, 401), "unknown");
     }
 
     #[test]
@@ -339,5 +385,31 @@ fields = ["x-api-key"]
         };
         let result = execute(&vault, &registry, &req);
         assert!(matches!(result, Err(CoreError::ConsentRequired(_))));
+    }
+
+    #[test]
+    fn execute_fails_when_provider_has_no_credentials() {
+        let dir = tempfile::tempdir().unwrap();
+        let keystore = crate::keychain::InMemoryKeyStore::new();
+        let vault = crate::vault::init_with_keystore(dir.path(), &keystore).unwrap();
+        let descriptor: ProviderDescriptor = toml::from_str(
+            r#"
+id = "empty"
+name = "Empty"
+domains = ["api.empty.com"]
+"#,
+        )
+        .unwrap();
+        let registry = Registry::from_descriptors(vec![descriptor]);
+
+        let req = AuthenticatedRequest {
+            provider_id: "empty",
+            secret_name: "EMPTY_KEY",
+            method: "GET",
+            path: "/",
+            query: vec![],
+        };
+        let result = execute(&vault, &registry, &req);
+        assert!(matches!(result, Err(CoreError::InvalidRequest(_))));
     }
 }

@@ -7,6 +7,7 @@ mod init;
 mod list;
 mod log;
 mod mcp;
+mod provider;
 mod run;
 mod scan;
 mod show;
@@ -22,7 +23,10 @@ pub fn dispatch(cli: Cli) -> anyhow::Result<()> {
         Commands::Scan { path } => scan::run(path, global),
         Commands::Add { name } => add::run(name, global),
         Commands::List => list::run(global),
-        Commands::Show { reference, metadata_only } => show::run(reference, metadata_only, global),
+        Commands::Show {
+            reference,
+            metadata_only,
+        } => show::run(reference, metadata_only, global),
         Commands::Check {
             reference,
             project,
@@ -35,6 +39,7 @@ pub fn dispatch(cli: Cli) -> anyhow::Result<()> {
         Commands::Log { project } => log::run(project, global),
         Commands::Export { encrypted } => export::run(encrypted, global),
         Commands::Import { encrypted } => import::run(encrypted, global),
+        Commands::Provider { action } => provider::run(action, global),
         Commands::Mcp { action } => mcp::run(action, global),
     }
 }

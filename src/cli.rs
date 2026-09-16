@@ -2,8 +2,14 @@ use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand};
 
+pub use provider::ProviderAction;
+
 #[derive(Debug, Parser)]
-#[command(name = "envy", version, about = "Local-first secrets manager and credential gateway")]
+#[command(
+    name = "envy",
+    version,
+    about = "Local-first secrets manager and credential gateway"
+)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
@@ -127,11 +133,31 @@ pub enum Commands {
         encrypted: PathBuf,
     },
 
+    /// Manage and validate provider descriptors.
+    Provider {
+        #[command(subcommand)]
+        action: ProviderAction,
+    },
+
     /// Run the local MCP adapter for AI agents.
     Mcp {
         #[command(subcommand)]
         action: McpAction,
     },
+}
+
+mod provider {
+    use clap::Subcommand;
+    use std::path::PathBuf;
+
+    #[derive(Debug, Subcommand)]
+    pub enum ProviderAction {
+        /// Validate a provider descriptor file before installing it.
+        Validate {
+            /// Path to the .toml descriptor to validate.
+            path: PathBuf,
+        },
+    }
 }
 
 #[derive(Debug, Subcommand)]
