@@ -7,7 +7,7 @@ edition = "2024"
 rusqlite = { version = "0.32", features = ["bundled"] }
 aes-gcm = "0.10"
 rand = "0.8"
-keyring = "3"
+keyring = "2"
 thiserror = "2"
 toml = "0.8"
 serde = { version = "1", features = ["derive"] }

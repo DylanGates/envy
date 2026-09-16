@@ -37,6 +37,20 @@ struct VaultConfig {
     schema_version: u32,
 }
 
+/// A secret's metadata, deliberately excluding `ciphertext`/`nonce`/
+/// `fingerprint` — this is what `list`/`show` operate on; nothing that
+/// can decrypt a value ever appears here.
+#[derive(Debug, Clone, Serialize)]
+pub struct SecretMetadata {
+    pub id: String,
+    pub name: String,
+    pub provider: Option<String>,
+    pub credential_kind: Option<String>,
+    pub risk: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
 /// A handle to an opened vault.
 pub struct Vault {
     pub vault_id: String,
@@ -91,6 +105,51 @@ impl Vault {
         let enc_key = crate::crypto::derive_encryption_key(&self.key);
         crate::crypto::decrypt(&enc_key, &nonce, &ciphertext)
     }
+
+    /// Lists metadata for every secret in the vault, sorted by name.
+    pub fn list_secrets(&self) -> Result<Vec<SecretMetadata>, CoreError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, name, provider, credential_kind, risk, created_at, updated_at
+             FROM secrets ORDER BY name",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(SecretMetadata {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                provider: row.get(2)?,
+                credential_kind: row.get(3)?,
+                risk: row.get(4)?,
+                created_at: row.get(5)?,
+                updated_at: row.get(6)?,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(CoreError::from)
+    }
+
+    /// Returns metadata for a single secret.
+    pub fn get_secret_metadata(&self, name: &str) -> Result<SecretMetadata, CoreError> {
+        use rusqlite::OptionalExtension;
+
+        self.conn
+            .query_row(
+                "SELECT id, name, provider, credential_kind, risk, created_at, updated_at
+                 FROM secrets WHERE id = ?1",
+                rusqlite::params![name],
+                |row| {
+                    Ok(SecretMetadata {
+                        id: row.get(0)?,
+                        name: row.get(1)?,
+                        provider: row.get(2)?,
+                        credential_kind: row.get(3)?,
+                        risk: row.get(4)?,
+                        created_at: row.get(5)?,
+                        updated_at: row.get(6)?,
+                    })
+                },
+            )
+            .optional()?
+            .ok_or_else(|| CoreError::SecretNotFound(name.to_string()))
+    }
 }
 
 /// Creates and opens the local vault under `<project_root>/.envy/`.
@@ -106,7 +165,10 @@ pub fn open(project_root: &Path) -> Result<Vault, CoreError> {
     open_with_keystore(project_root, &OsKeychain)
 }
 
-pub(crate) fn init_with_keystore(project_root: &Path, keystore: &dyn KeyStore) -> Result<Vault, CoreError> {
+pub(crate) fn init_with_keystore(
+    project_root: &Path,
+    keystore: &dyn KeyStore,
+) -> Result<Vault, CoreError> {
     let envy_dir = project_root.join(".envy");
     let db_path = envy_dir.join("vault.db");
     let config_path = envy_dir.join("config.toml");
@@ -131,6 +193,10 @@ pub(crate) fn init_with_keystore(project_root: &Path, keystore: &dyn KeyStore) -
     keystore.store_key(&vault_id, &key)?;
 
     let mut conn = rusqlite::Connection::open(&db_path)?;
+    // WAL mode: allows concurrent readers alongside one writer and avoids
+    // SQLITE_BUSY errors when `envy mcp serve` and a CLI command run at
+    // the same time. busy_timeout gives the second writer 5 s to retry.
+    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;")?;
     let tx = conn.transaction()?;
     tx.execute_batch(SCHEMA)?;
     tx.commit()?;
@@ -182,6 +248,7 @@ fn open_with_keystore(project_root: &Path, keystore: &dyn KeyStore) -> Result<Va
     let key = keystore.load_key(&config.vault_id)?;
 
     let conn = rusqlite::Connection::open(&db_path)?;
+    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;")?;
 
     Ok(Vault {
         vault_id: config.vault_id,
@@ -207,12 +274,12 @@ fn enforce_permissions(dir: &Path, db_path: &Path) -> Result<(), CoreError> {
             source,
         }
     })?;
-    std::fs::set_permissions(db_path, std::fs::Permissions::from_mode(0o600)).map_err(|source| {
-        CoreError::Io {
+    std::fs::set_permissions(db_path, std::fs::Permissions::from_mode(0o600)).map_err(
+        |source| CoreError::Io {
             path: db_path.to_path_buf(),
             source,
-        }
-    })?;
+        },
+    )?;
     Ok(())
 }
 
@@ -325,7 +392,9 @@ mod tests {
         let vault = init_with_keystore(dir.path(), &keystore).unwrap();
         vault.add_secret("STRIPE_KEY", b"sk_live_abc123").unwrap();
         let result = vault.add_secret("STRIPE_KEY", b"sk_live_different");
-        assert!(matches!(result, Err(CoreError::SecretAlreadyExists(name)) if name == "STRIPE_KEY"));
+        assert!(
+            matches!(result, Err(CoreError::SecretAlreadyExists(name)) if name == "STRIPE_KEY")
+        );
     }
 
     #[test]
@@ -344,6 +413,50 @@ mod tests {
         let keystore = InMemoryKeyStore::new();
         let vault = init_with_keystore(dir.path(), &keystore).unwrap();
         let result = vault.get_secret("DOES_NOT_EXIST");
+        assert!(matches!(result, Err(CoreError::SecretNotFound(name)) if name == "DOES_NOT_EXIST"));
+    }
+
+    #[test]
+    fn list_secrets_returns_all_added_sorted_by_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let keystore = InMemoryKeyStore::new();
+        let vault = init_with_keystore(dir.path(), &keystore).unwrap();
+        vault.add_secret("ZEBRA_KEY", b"z").unwrap();
+        vault.add_secret("ALPHA_KEY", b"a").unwrap();
+
+        let secrets = vault.list_secrets().unwrap();
+        let names: Vec<&str> = secrets.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, vec!["ALPHA_KEY", "ZEBRA_KEY"]);
+        assert!(!secrets[0].created_at.is_empty());
+    }
+
+    #[test]
+    fn list_secrets_on_empty_vault_is_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let keystore = InMemoryKeyStore::new();
+        let vault = init_with_keystore(dir.path(), &keystore).unwrap();
+        assert!(vault.list_secrets().unwrap().is_empty());
+    }
+
+    #[test]
+    fn get_secret_metadata_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let keystore = InMemoryKeyStore::new();
+        let vault = init_with_keystore(dir.path(), &keystore).unwrap();
+        vault.add_secret("STRIPE_KEY", b"sk_live_abc123").unwrap();
+
+        let meta = vault.get_secret_metadata("STRIPE_KEY").unwrap();
+        assert_eq!(meta.id, "STRIPE_KEY");
+        assert_eq!(meta.name, "STRIPE_KEY");
+        assert_eq!(meta.provider, None);
+    }
+
+    #[test]
+    fn get_secret_metadata_fails_for_missing_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let keystore = InMemoryKeyStore::new();
+        let vault = init_with_keystore(dir.path(), &keystore).unwrap();
+        let result = vault.get_secret_metadata("DOES_NOT_EXIST");
         assert!(matches!(result, Err(CoreError::SecretNotFound(name)) if name == "DOES_NOT_EXIST"));
     }
 

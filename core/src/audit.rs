@@ -14,7 +14,7 @@ pub struct AuditEvent<'a> {
 }
 
 /// A stored audit event, as read back from the vault.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct AuditEventRecord {
     pub id: i64,
     pub timestamp: String,
