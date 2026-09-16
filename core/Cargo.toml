@@ -21,6 +21,4 @@ directories = "5"
 ignore = "0.4"
 ureq = "3"
 url = "2"
-
-[dev-dependencies]
 tempfile = "3"

@@ -1,12 +1,16 @@
 pub mod audit;
 pub mod auth;
 pub mod check;
+pub mod consent;
 pub mod crypto;
+pub mod doctor;
+pub mod dotenv;
 pub mod error;
 pub mod ipc;
 pub mod keychain;
 pub mod policy;
 pub mod provider;
+pub mod redact;
 pub mod request;
 pub mod rpc;
 pub mod scanner;

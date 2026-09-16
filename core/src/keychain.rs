@@ -13,6 +13,9 @@ const SERVICE: &str = "envy";
 pub trait KeyStore {
     fn store_key(&self, vault_id: &str, key: &[u8; 32]) -> Result<(), CoreError>;
     fn load_key(&self, vault_id: &str) -> Result<[u8; 32], CoreError>;
+    /// Removes a stored key. Used by `envy doctor` to clean up the
+    /// diagnostic keychain entry it creates for its round-trip check.
+    fn delete_key(&self, vault_id: &str) -> Result<(), CoreError>;
 }
 
 /// Stores the vault data key in the platform keychain (macOS Keychain,
@@ -34,6 +37,12 @@ impl KeyStore for OsKeychain {
             .decode(encoded)
             .map_err(|_| CoreError::DecryptionFailed)?;
         <[u8; 32]>::try_from(bytes).map_err(|_| CoreError::DecryptionFailed)
+    }
+
+    fn delete_key(&self, vault_id: &str) -> Result<(), CoreError> {
+        let entry = keyring::Entry::new(SERVICE, vault_id)?;
+        entry.delete_password()?;
+        Ok(())
     }
 }
 
@@ -65,6 +74,11 @@ impl KeyStore for InMemoryKeyStore {
             .get(vault_id)
             .copied()
             .ok_or(CoreError::DecryptionFailed)
+    }
+
+    fn delete_key(&self, vault_id: &str) -> Result<(), CoreError> {
+        self.keys.lock().unwrap().remove(vault_id);
+        Ok(())
     }
 }
 
