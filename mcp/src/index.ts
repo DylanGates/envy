@@ -48,9 +48,11 @@ async function main(): Promise<void> {
     "make_authenticated_request",
     {
       description:
-        "Makes an authenticated GET request to a provider (e.g. context7) using a credential " +
+        "Makes an authenticated request to a provider (e.g. context7) using a credential " +
         "stored in envy's vault. The credential value is never returned to the caller. " +
-        "Non-GET methods currently fail closed (no consent flow exists yet).",
+        "GET always works. A non-GET method fails closed unless a human has already run " +
+        "`envy consent grant <provider> make_authenticated_request` for this provider " +
+        "outside of this session — an agent can never grant itself consent.",
       inputSchema: {
         provider: z.string().describe("Provider id, e.g. \"context7\", \"stripe\"."),
         secretName: z.string().describe("Name of the vault secret to use, e.g. from `envy add`."),
