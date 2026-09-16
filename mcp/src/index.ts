@@ -86,29 +86,42 @@ async function main(): Promise<void> {
     "check_credential",
     {
       description:
-        "Ad-hoc credential check: makes a read-only GET to a URL you supply, using a credential " +
-        "stored in envy's vault, and reports whether it looks valid, invalid, or unknown. " +
-        "The credential value is never returned. No provider catalog is used — the url you pass " +
-        "is your explicit approval for this one call; envy never guesses or probes endpoints on " +
-        "its own.",
+        "Checks a credential's real status against its provider, without ever returning the " +
+        "credential value. Two mutually exclusive modes: pass \"provider\" (an installed " +
+        "provider id, e.g. \"stripe\" — see `envy provider list`) to run that provider's own " +
+        "cataloged, verified health check, or pass \"url\" for a one-time ad-hoc read-only GET " +
+        "to a URL you supply — passing \"url\" is your explicit approval for that one call; " +
+        "envy never guesses or probes endpoints on its own either way. Status is one of " +
+        "\"valid\"/\"invalid\"/\"expired\"/\"limited\"/\"unknown\" (a network failure or " +
+        "unrecognized status always maps to \"unknown\", never \"invalid\" — a credential is " +
+        "never blamed for an outage), or \"not_attempted\" when a named provider has no verified " +
+        "health check configured yet (\"detail\" explains why in that case).",
       inputSchema: {
         secretName: z.string().describe("Name of the vault secret to check, e.g. from `envy add`."),
-        url: z.string().describe("The HTTPS URL to call, e.g. \"https://api.example.com/me\"."),
+        provider: z
+          .string()
+          .optional()
+          .describe("Cataloged mode: an installed provider id, e.g. \"stripe\". Mutually exclusive with url."),
+        url: z
+          .string()
+          .optional()
+          .describe("Ad-hoc mode: the HTTPS URL to call, e.g. \"https://api.example.com/me\". Mutually exclusive with provider."),
         authStyle: z
           .enum(["bearer", "header"])
-          .describe("How to inject the credential: \"bearer\" (Authorization: Bearer <value>) or \"header\"."),
+          .optional()
+          .describe("Ad-hoc mode only: how to inject the credential (\"bearer\" or \"header\"). Required when url is given."),
         headerName: z
           .string()
           .optional()
-          .describe("Header name to use when authStyle is \"header\"."),
+          .describe("Ad-hoc mode only: header name to use when authStyle is \"header\"."),
       },
     },
-    async ({ secretName, url, authStyle, headerName }) => {
+    async ({ secretName, provider, url, authStyle, headerName }) => {
       try {
         const result = await callCore(
           projectRoot,
           "check_credential",
-          { secretName, url, authStyle, headerName },
+          { secretName, provider, url, authStyle, headerName },
           core.recentOutput,
         );
         return { content: [{ type: "text", text: JSON.stringify(result) }] };
