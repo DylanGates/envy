@@ -37,43 +37,87 @@ export function resolveEnvyBinary(): string {
   return "envy";
 }
 
+const MAX_RESTARTS = 5;
+const BASE_RESTART_DELAY_MS = 500;
+// After this many milliseconds of uptime without an exit, the restart
+// counter resets so a temporarily-flaky core doesn't permanently exhaust
+// the restart budget.
+const UPTIME_RESET_MS = 30_000;
+
 export interface CoreProcessHandle {
-  readonly child: ChildProcessByStdio<null, Readable, Readable>;
   /** Recent lines from the child's stdout/stderr, for diagnosing a
    * connection failure (e.g. surfacing a VaultNotFound message). */
   recentOutput(): string[];
 }
 
 export function startCoreProcess(projectRoot: string): CoreProcessHandle {
-  const binary = resolveEnvyBinary();
-  const child = spawn(binary, ["mcp", "serve", "--quiet"], {
-    cwd: projectRoot,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-
   const ring: string[] = [];
-  const capture = (source: "stdout" | "stderr") => (chunk: Buffer) => {
-    for (const line of chunk.toString("utf8").split("\n")) {
-      if (line.length === 0) continue;
-      ring.push(line);
-      if (ring.length > RING_BUFFER_LINES) ring.shift();
-      console.error(`[envy-core:${source}] ${line}`);
-    }
-  };
-  child.stdout.on("data", capture("stdout"));
-  child.stderr.on("data", capture("stderr"));
+  let currentChild: ChildProcessByStdio<null, Readable, Readable> | null = null;
+  let restarts = 0;
+  let shutdownRequested = false;
 
-  child.on("exit", (code, signal) => {
-    console.error(`[envy-core] process exited (code=${code}, signal=${signal})`);
-  });
-  child.on("error", (err) => {
-    console.error(`[envy-core] failed to start ('${binary}'): ${err.message}`);
-  });
+  function launch(): void {
+    if (shutdownRequested) return;
 
-  const shutdown = () => {
-    if (!child.killed) {
-      child.kill();
-    }
+    const binary = resolveEnvyBinary();
+    const child = spawn(binary, ["mcp", "serve", "--quiet"], {
+      cwd: projectRoot,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    currentChild = child;
+
+    const capture = (source: string) => (chunk: Buffer) => {
+      for (const line of chunk.toString("utf8").split("\n")) {
+        if (line.length === 0) continue;
+        ring.push(line);
+        if (ring.length > RING_BUFFER_LINES) ring.shift();
+        console.error(`[envy-core:${source}] ${line}`);
+      }
+    };
+    child.stdout.on("data", capture("stdout"));
+    child.stderr.on("data", capture("stderr"));
+
+    child.on("error", (err) => {
+      console.error(`[envy-core] failed to start ('${binary}'): ${err.message}`);
+    });
+
+    // Reset restart counter after stable uptime so a transient crash
+    // doesn't permanently exhaust the budget.
+    const uptimeTimer = setTimeout(() => {
+      if (restarts > 0) {
+        console.error("[envy-core] process stable, resetting restart counter");
+        restarts = 0;
+      }
+    }, UPTIME_RESET_MS);
+    // Don't hold the process open just for this timer.
+    uptimeTimer.unref();
+
+    child.on("exit", (code, signal) => {
+      clearTimeout(uptimeTimer);
+      if (shutdownRequested) return;
+      console.error(`[envy-core] exited (code=${code}, signal=${signal})`);
+      if (restarts < MAX_RESTARTS) {
+        const delay = Math.min(BASE_RESTART_DELAY_MS * 2 ** restarts, 30_000);
+        restarts++;
+        console.error(
+          `[envy-core] restarting in ${delay}ms (attempt ${restarts}/${MAX_RESTARTS})`,
+        );
+        setTimeout(launch, delay).unref();
+      } else {
+        console.error(
+          "[envy-core] core process exited too many times — " +
+            "restart budget exhausted; MCP tool calls will fail until " +
+            "this adapter process is restarted.",
+        );
+      }
+    });
+  }
+
+  // Register shutdown handlers once, outside the launch loop, so they
+  // don't accumulate across restarts.
+  const shutdown = (): void => {
+    shutdownRequested = true;
+    currentChild?.kill();
   };
   process.on("exit", shutdown);
   process.on("SIGINT", () => {
@@ -85,8 +129,9 @@ export function startCoreProcess(projectRoot: string): CoreProcessHandle {
     process.exit();
   });
 
+  launch();
+
   return {
-    child,
     recentOutput: () => [...ring],
   };
 }
