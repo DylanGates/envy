@@ -60,7 +60,11 @@ export async function callCore(
   params: unknown = {},
   recentOutput: () => string[] = () => [],
 ): Promise<unknown> {
-  const socketPath = path.join(projectRoot, ".envy", "mcp.sock");
+  const isWindows = process.platform === "win32";
+  const projName = path.basename(projectRoot) || "default";
+  const socketPath = isWindows
+    ? `\\\\.\\pipe\\envy-mcp-${projName}`
+    : path.join(projectRoot, ".envy", "mcp.sock");
   const socket = await connectWithRetry(socketPath, recentOutput);
 
   return new Promise((resolve, reject) => {

@@ -472,10 +472,11 @@ mod tests {
         let (dir, ctx) = test_context();
         let listener = crate::ipc::bind(dir.path()).unwrap();
 
-        let socket_path = dir.path().join(".envy").join("mcp.sock");
+        let proj_dir = dir.path().to_path_buf();
         let client = std::thread::spawn(move || {
-            use interprocess::local_socket::{GenericFilePath, Stream, prelude::*};
-            let name = socket_path.to_fs_name::<GenericFilePath>().unwrap();
+            use interprocess::local_socket::{Stream, prelude::*};
+            let socket_path = proj_dir.join(".envy").join("mcp.sock");
+            let name = crate::ipc::socket_name(&proj_dir, &socket_path).unwrap();
             let mut conn = BufReader::new(Stream::connect(name).unwrap());
 
             // Both requests written in a single write, so the OS may
