@@ -98,8 +98,9 @@ pub fn export_encrypted(vault: &Vault, password: &[u8]) -> Result<String, CoreEr
         secrets: backup_items,
     };
 
-    let serialized_payload = serde_json::to_vec(&payload)
-        .map_err(|e| CoreError::InvalidRequest(format!("failed to serialize backup payload: {e}")))?;
+    let serialized_payload = serde_json::to_vec(&payload).map_err(|e| {
+        CoreError::InvalidRequest(format!("failed to serialize backup payload: {e}"))
+    })?;
 
     let mut salt = [0u8; 16];
     rand::thread_rng().fill_bytes(&mut salt);
@@ -121,8 +122,9 @@ pub fn export_encrypted(vault: &Vault, password: &[u8]) -> Result<String, CoreEr
         ciphertext: B64.encode(ciphertext),
     };
 
-    serde_json::to_string_pretty(&backup_file)
-        .map_err(|e| CoreError::InvalidRequest(format!("failed to serialize encrypted backup: {e}")))
+    serde_json::to_string_pretty(&backup_file).map_err(|e| {
+        CoreError::InvalidRequest(format!("failed to serialize encrypted backup: {e}"))
+    })
 }
 
 /// Result counts of importing an encrypted backup.
@@ -168,7 +170,9 @@ pub fn import_encrypted(
         .map_err(|e| CoreError::InvalidRequest(format!("invalid nonce encoding: {e}")))?;
 
     if nonce_raw.len() != 12 {
-        return Err(CoreError::InvalidRequest("invalid nonce length".to_string()));
+        return Err(CoreError::InvalidRequest(
+            "invalid nonce length".to_string(),
+        ));
     }
     let mut nonce = [0u8; 12];
     nonce.copy_from_slice(&nonce_raw);

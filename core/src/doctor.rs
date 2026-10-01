@@ -75,7 +75,10 @@ pub fn run() -> DoctorReport {
 
     let vault_id = first_vault.as_ref().map(|v| v.vault_id.clone());
 
-    match (&first_vault, crate::vault::init_with_keystore(dir.path(), &keystore)) {
+    match (
+        &first_vault,
+        crate::vault::init_with_keystore(dir.path(), &keystore),
+    ) {
         (Some(first), Ok(second)) if first.vault_id == second.vault_id => {
             steps.push(DoctorStep {
                 name: "re-init (idempotency)",
@@ -85,7 +88,10 @@ pub fn run() -> DoctorReport {
         (Some(_), Ok(second)) => {
             steps.push(DoctorStep {
                 name: "re-init (idempotency)",
-                outcome: Err(format!("re-init returned a different vault id: {}", second.vault_id)),
+                outcome: Err(format!(
+                    "re-init returned a different vault id: {}",
+                    second.vault_id
+                )),
             });
         }
         (None, _) => {

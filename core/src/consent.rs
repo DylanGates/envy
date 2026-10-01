@@ -80,7 +80,10 @@ mod tests {
 
     #[test]
     fn rejects_non_numeric_amount() {
-        assert!(matches!(parse_ttl("fives"), Err(CoreError::InvalidRequest(_))));
+        assert!(matches!(
+            parse_ttl("fives"),
+            Err(CoreError::InvalidRequest(_))
+        ));
     }
 
     #[test]

@@ -17,12 +17,18 @@ pub fn build_auth_headers(
 ) -> Vec<(String, String)> {
     let mut headers = Vec::new();
     match style {
-        "bearer" => headers.push(("Authorization".to_string(), format!("Bearer {secret_value}"))),
+        "bearer" => headers.push((
+            "Authorization".to_string(),
+            format!("Bearer {secret_value}"),
+        )),
         "header" => {
             let name = header_name.unwrap_or("Authorization").to_string();
             headers.push((name, secret_value.to_string()));
         }
-        _ => headers.push(("Authorization".to_string(), format!("Bearer {secret_value}"))),
+        _ => headers.push((
+            "Authorization".to_string(),
+            format!("Bearer {secret_value}"),
+        )),
     }
     for (name, value) in extra_headers {
         headers.push((name.clone(), value.clone()));
@@ -39,7 +45,10 @@ mod tests {
         let headers = build_auth_headers("bearer", None, &HashMap::new(), "sk_live_abc123");
         assert_eq!(
             headers,
-            vec![("Authorization".to_string(), "Bearer sk_live_abc123".to_string())]
+            vec![(
+                "Authorization".to_string(),
+                "Bearer sk_live_abc123".to_string()
+            )]
         );
     }
 
@@ -50,12 +59,18 @@ mod tests {
         let headers = build_auth_headers("header", Some("x-api-key"), &extra, "sk-ant-abc123");
         let map: HashMap<_, _> = headers.into_iter().collect();
         assert_eq!(map.get("x-api-key"), Some(&"sk-ant-abc123".to_string()));
-        assert_eq!(map.get("anthropic-version"), Some(&"2023-06-01".to_string()));
+        assert_eq!(
+            map.get("anthropic-version"),
+            Some(&"2023-06-01".to_string())
+        );
     }
 
     #[test]
     fn unknown_style_falls_back_to_bearer() {
         let headers = build_auth_headers("something-else", None, &HashMap::new(), "value");
-        assert_eq!(headers, vec![("Authorization".to_string(), "Bearer value".to_string())]);
+        assert_eq!(
+            headers,
+            vec![("Authorization".to_string(), "Bearer value".to_string())]
+        );
     }
 }

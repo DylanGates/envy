@@ -134,13 +134,16 @@ pub fn check_adhoc(vault: &Vault, req: &AdHocCheckRequest) -> Result<CheckResult
     };
     match policy::evaluate(&policy_request) {
         PolicyDecision::Allow => {}
-        PolicyDecision::RequireConsent { reason } => return Err(CoreError::ConsentRequired(reason)),
+        PolicyDecision::RequireConsent { reason } => {
+            return Err(CoreError::ConsentRequired(reason));
+        }
         PolicyDecision::Deny { reason } => return Err(CoreError::PolicyDenied(reason)),
     }
 
     let secret_value = vault.get_secret(req.secret_name)?;
-    let secret_value = String::from_utf8(secret_value)
-        .map_err(|_| CoreError::InvalidRequest("stored credential is not valid UTF-8".to_string()))?;
+    let secret_value = String::from_utf8(secret_value).map_err(|_| {
+        CoreError::InvalidRequest("stored credential is not valid UTF-8".to_string())
+    })?;
 
     let headers = crate::auth::build_auth_headers(
         req.auth_style,
@@ -179,11 +182,19 @@ pub fn check_adhoc(vault: &Vault, req: &AdHocCheckRequest) -> Result<CheckResult
         provider: Some("ad-hoc"),
         operation: "check_credential",
         endpoint_host: Some(&host),
-        outcome: if status == CredentialStatus::Valid { "success" } else { "error" },
+        outcome: if status == CredentialStatus::Valid {
+            "success"
+        } else {
+            "error"
+        },
         redaction_summary: Some("auth header redacted from logs"),
     })?;
 
-    Ok(CheckResult { status, http_status, detail: None })
+    Ok(CheckResult {
+        status,
+        http_status,
+        detail: None,
+    })
 }
 
 fn map_http_status(status: u16) -> CredentialStatus {
@@ -244,13 +255,16 @@ pub fn check_cataloged(
     };
     match policy::evaluate(&policy_request) {
         PolicyDecision::Allow => {}
-        PolicyDecision::RequireConsent { reason } => return Err(CoreError::ConsentRequired(reason)),
+        PolicyDecision::RequireConsent { reason } => {
+            return Err(CoreError::ConsentRequired(reason));
+        }
         PolicyDecision::Deny { reason } => return Err(CoreError::PolicyDenied(reason)),
     }
 
     let secret_value = vault.get_secret(req.secret_name)?;
-    let secret_value = String::from_utf8(secret_value)
-        .map_err(|_| CoreError::InvalidRequest("stored credential is not valid UTF-8".to_string()))?;
+    let secret_value = String::from_utf8(secret_value).map_err(|_| {
+        CoreError::InvalidRequest("stored credential is not valid UTF-8".to_string())
+    })?;
 
     let headers = crate::auth::build_auth_headers(
         &cred.auth_style,
@@ -290,11 +304,19 @@ pub fn check_cataloged(
         provider: Some(&descriptor.id),
         operation: "check_credential",
         endpoint_host: url.host_str(),
-        outcome: if status == CredentialStatus::Valid { "success" } else { "error" },
+        outcome: if status == CredentialStatus::Valid {
+            "success"
+        } else {
+            "error"
+        },
         redaction_summary: Some("auth header redacted from logs"),
     })?;
 
-    Ok(CheckResult { status, http_status, detail: None })
+    Ok(CheckResult {
+        status,
+        http_status,
+        detail: None,
+    })
 }
 
 #[cfg(test)]
@@ -448,12 +470,30 @@ auth_style = "bearer"
 
     #[test]
     fn credential_status_from_word_never_produces_invalid_for_unrecognized_words() {
-        assert_eq!(CredentialStatus::from_word("valid"), CredentialStatus::Valid);
-        assert_eq!(CredentialStatus::from_word("invalid"), CredentialStatus::Invalid);
-        assert_eq!(CredentialStatus::from_word("expired"), CredentialStatus::Expired);
-        assert_eq!(CredentialStatus::from_word("limited"), CredentialStatus::Limited);
-        assert_eq!(CredentialStatus::from_word("unknown"), CredentialStatus::Unknown);
-        assert_eq!(CredentialStatus::from_word("some-typo"), CredentialStatus::Unknown);
+        assert_eq!(
+            CredentialStatus::from_word("valid"),
+            CredentialStatus::Valid
+        );
+        assert_eq!(
+            CredentialStatus::from_word("invalid"),
+            CredentialStatus::Invalid
+        );
+        assert_eq!(
+            CredentialStatus::from_word("expired"),
+            CredentialStatus::Expired
+        );
+        assert_eq!(
+            CredentialStatus::from_word("limited"),
+            CredentialStatus::Limited
+        );
+        assert_eq!(
+            CredentialStatus::from_word("unknown"),
+            CredentialStatus::Unknown
+        );
+        assert_eq!(
+            CredentialStatus::from_word("some-typo"),
+            CredentialStatus::Unknown
+        );
         assert_eq!(CredentialStatus::from_word(""), CredentialStatus::Unknown);
     }
 
