@@ -19,8 +19,14 @@ pub fn run(reference: String, metadata_only: bool, global: &GlobalArgs) -> anyho
     } else if !global.quiet {
         println!("name:            {}", meta.name);
         println!("reference:       envy://{}", meta.name);
-        println!("provider:        {}", meta.provider.as_deref().unwrap_or("-"));
-        println!("credential_kind: {}", meta.credential_kind.as_deref().unwrap_or("-"));
+        println!(
+            "provider:        {}",
+            meta.provider.as_deref().unwrap_or("-")
+        );
+        println!(
+            "credential_kind: {}",
+            meta.credential_kind.as_deref().unwrap_or("-")
+        );
         println!("risk:            {}", meta.risk.as_deref().unwrap_or("-"));
         println!("created_at:      {}", meta.created_at);
         println!("updated_at:      {}", meta.updated_at);

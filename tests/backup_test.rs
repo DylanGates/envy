@@ -36,7 +36,12 @@ fn test_cli_encrypted_export_import_roundtrip() {
     // 3. Export encrypted backup via stdin password
     let backup_file = project_dir.join("vault.backup.enc");
     let mut export_child = Command::new(envy_bin)
-        .args(["export", "--encrypted", backup_file.to_str().unwrap(), "--non-interactive"])
+        .args([
+            "export",
+            "--encrypted",
+            backup_file.to_str().unwrap(),
+            "--non-interactive",
+        ])
         .current_dir(project_dir)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -48,7 +53,11 @@ fn test_cli_encrypted_export_import_roundtrip() {
         stdin.write_all(b"my-backup-password\n").unwrap();
     }
     let export_res = export_child.wait_with_output().unwrap();
-    assert!(export_res.status.success(), "export failed: {}", String::from_utf8_lossy(&export_res.stderr));
+    assert!(
+        export_res.status.success(),
+        "export failed: {}",
+        String::from_utf8_lossy(&export_res.stderr)
+    );
     assert!(backup_file.exists());
 
     let backup_content = std::fs::read_to_string(&backup_file).unwrap();
@@ -67,7 +76,12 @@ fn test_cli_encrypted_export_import_roundtrip() {
     assert!(init2_output.status.success());
 
     let mut import_child = Command::new(envy_bin)
-        .args(["import", "--encrypted", backup_file.to_str().unwrap(), "--non-interactive"])
+        .args([
+            "import",
+            "--encrypted",
+            backup_file.to_str().unwrap(),
+            "--non-interactive",
+        ])
         .current_dir(project_dir2)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -79,7 +93,11 @@ fn test_cli_encrypted_export_import_roundtrip() {
         stdin.write_all(b"my-backup-password\n").unwrap();
     }
     let import_res = import_child.wait_with_output().unwrap();
-    assert!(import_res.status.success(), "import failed: {}", String::from_utf8_lossy(&import_res.stderr));
+    assert!(
+        import_res.status.success(),
+        "import failed: {}",
+        String::from_utf8_lossy(&import_res.stderr)
+    );
 
     // 5. Verify list in project 2
     let list_output = Command::new(envy_bin)

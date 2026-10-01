@@ -86,11 +86,10 @@ impl McpClient {
     }
 
     fn supports(&self, scope: Scope) -> bool {
-        match (self, scope) {
-            (McpClient::ClaudeDesktop, Scope::Project) => false,
-            (McpClient::Pi, Scope::Project) => false,
-            _ => true,
-        }
+        !matches!(
+            (self, scope),
+            (McpClient::ClaudeDesktop, Scope::Project) | (McpClient::Pi, Scope::Project)
+        )
     }
 
     /// Default scope when `--scope` isn't passed.
@@ -106,11 +105,7 @@ impl McpClient {
     /// `project_root` is only used for `Scope::Project`.
     fn config_path(&self, scope: Scope, project_root: &Path) -> anyhow::Result<PathBuf> {
         if !self.supports(scope) {
-            bail!(
-                "{} does not support {:?} scope",
-                self.id(),
-                scope
-            );
+            bail!("{} does not support {:?} scope", self.id(), scope);
         }
 
         let base_dirs = directories::BaseDirs::new()
@@ -126,15 +121,15 @@ impl McpClient {
             (McpClient::Cursor, Scope::Global) => {
                 base_dirs.home_dir().join(".cursor").join("mcp.json")
             }
-            (McpClient::Codex, Scope::Project) => {
-                project_root.join(".codex").join("config.toml")
-            }
+            (McpClient::Codex, Scope::Project) => project_root.join(".codex").join("config.toml"),
             (McpClient::Codex, Scope::Global) => {
                 base_dirs.home_dir().join(".codex").join("config.toml")
             }
-            (McpClient::Pi, Scope::Global) => {
-                base_dirs.home_dir().join(".pi").join("agent").join("mcp.json")
-            }
+            (McpClient::Pi, Scope::Global) => base_dirs
+                .home_dir()
+                .join(".pi")
+                .join("agent")
+                .join("mcp.json"),
             (McpClient::Agy, Scope::Project) => {
                 project_root.join(".agents").join("mcp_config.json")
             }
@@ -180,7 +175,12 @@ pub fn resolve_mcp_entry(override_path: Option<PathBuf>) -> anyhow::Result<PathB
 fn resolve_relative_to(exe_dir: &Path) -> anyhow::Result<PathBuf> {
     // Dev layout: cli/target/{debug,release}/envy -> cli/mcp/dist/index.js
     // Two levels up from target/{debug,release}, not one: target/debug/../.. == cli/.
-    let candidate = exe_dir.join("..").join("..").join("mcp").join("dist").join("index.js");
+    let candidate = exe_dir
+        .join("..")
+        .join("..")
+        .join("mcp")
+        .join("dist")
+        .join("index.js");
     if candidate.is_file() {
         return Ok(candidate.canonicalize().unwrap_or(candidate));
     }
@@ -233,8 +233,13 @@ pub fn install(
 /// at all, since nothing is being destroyed.
 fn back_up(path: &Path) -> anyhow::Result<()> {
     let backup = PathBuf::from(format!("{}.bak", path.display()));
-    std::fs::copy(path, &backup)
-        .with_context(|| format!("failed to back up {} to {}", path.display(), backup.display()))?;
+    std::fs::copy(path, &backup).with_context(|| {
+        format!(
+            "failed to back up {} to {}",
+            path.display(),
+            backup.display()
+        )
+    })?;
     Ok(())
 }
 
@@ -255,7 +260,10 @@ fn install_json(
     };
 
     let serde_json::Value::Object(mut root) = existing else {
-        bail!("{} does not contain a JSON object at its root", path.display());
+        bail!(
+            "{} does not contain a JSON object at its root",
+            path.display()
+        );
     };
 
     let servers_key = "mcpServers";
@@ -263,7 +271,10 @@ fn install_json(
         .entry(servers_key)
         .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
     let serde_json::Value::Object(servers_map) = servers else {
-        bail!("{} — \"{servers_key}\" is not a JSON object", path.display());
+        bail!(
+            "{} — \"{servers_key}\" is not a JSON object",
+            path.display()
+        );
     };
 
     if servers_map.contains_key("envy") {
@@ -279,12 +290,21 @@ fn install_json(
 
     let mut entry = serde_json::Map::new();
     if client == McpClient::ClaudeCode {
-        entry.insert("type".to_string(), serde_json::Value::String("stdio".to_string()));
+        entry.insert(
+            "type".to_string(),
+            serde_json::Value::String("stdio".to_string()),
+        );
     }
     if client == McpClient::Agy {
-        entry.insert("transport".to_string(), serde_json::Value::String("stdio".to_string()));
+        entry.insert(
+            "transport".to_string(),
+            serde_json::Value::String("stdio".to_string()),
+        );
     }
-    entry.insert("command".to_string(), serde_json::Value::String("node".to_string()));
+    entry.insert(
+        "command".to_string(),
+        serde_json::Value::String("node".to_string()),
+    );
     entry.insert(
         "args".to_string(),
         serde_json::Value::Array(vec![
@@ -297,11 +317,17 @@ fn install_json(
 
     let out = serde_json::to_string_pretty(&serde_json::Value::Object(root))
         .context("failed to serialize config")?;
-    std::fs::write(path, out + "\n").with_context(|| format!("failed to write {}", path.display()))?;
+    std::fs::write(path, out + "\n")
+        .with_context(|| format!("failed to write {}", path.display()))?;
     Ok(())
 }
 
-fn install_toml(path: &Path, mcp_entry: &str, project_root: &str, force: bool) -> anyhow::Result<()> {
+fn install_toml(
+    path: &Path,
+    mcp_entry: &str,
+    project_root: &str,
+    force: bool,
+) -> anyhow::Result<()> {
     let mut doc = if path.exists() {
         let text = std::fs::read_to_string(path)
             .with_context(|| format!("failed to read {}", path.display()))?;
@@ -338,7 +364,8 @@ fn install_toml(path: &Path, mcp_entry: &str, project_root: &str, force: bool) -
 
     servers_table.insert("envy", toml_edit::Item::Table(entry));
 
-    std::fs::write(path, doc.to_string()).with_context(|| format!("failed to write {}", path.display()))?;
+    std::fs::write(path, doc.to_string())
+        .with_context(|| format!("failed to write {}", path.display()))?;
     Ok(())
 }
 
@@ -351,14 +378,25 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.json");
 
-        install_json(McpClient::ClaudeDesktop, &path, "/opt/envy/mcp/dist/index.js", "/proj", false).unwrap();
+        install_json(
+            McpClient::ClaudeDesktop,
+            &path,
+            "/opt/envy/mcp/dist/index.js",
+            "/proj",
+            false,
+        )
+        .unwrap();
 
-        let value: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let value: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         let entry = &value["mcpServers"]["envy"];
         assert_eq!(entry["command"], "node");
         assert_eq!(entry["args"][0], "/opt/envy/mcp/dist/index.js");
         assert_eq!(entry["args"][1], "/proj");
-        assert!(entry.get("type").is_none(), "only Claude Code needs \"type\"");
+        assert!(
+            entry.get("type").is_none(),
+            "only Claude Code needs \"type\""
+        );
     }
 
     #[test]
@@ -366,7 +404,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join(".mcp.json");
         install_json(McpClient::ClaudeCode, &path, "entry.js", "/proj", false).unwrap();
-        let value: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let value: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(value["mcpServers"]["envy"]["type"], "stdio");
     }
 
@@ -375,7 +414,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("mcp_config.json");
         install_json(McpClient::Agy, &path, "entry.js", "/proj", false).unwrap();
-        let value: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let value: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(value["mcpServers"]["envy"]["transport"], "stdio");
         assert!(value["mcpServers"]["envy"].get("type").is_none());
     }
@@ -392,7 +432,8 @@ mod tests {
 
         install_json(McpClient::Cursor, &path, "entry.js", "/proj", false).unwrap();
 
-        let value: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let value: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(value["theme"], "dark");
         assert_eq!(value["mcpServers"]["other"]["command"], "foo");
         assert_eq!(value["mcpServers"]["envy"]["command"], "node");
@@ -418,11 +459,13 @@ mod tests {
 
         let without_force = install_json(McpClient::Cursor, &path, "new-entry.js", "/proj", false);
         assert!(without_force.is_err());
-        let value: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let value: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(value["mcpServers"]["envy"]["args"][0], "old-entry.js");
 
         install_json(McpClient::Cursor, &path, "new-entry.js", "/proj", true).unwrap();
-        let value: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let value: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(value["mcpServers"]["envy"]["args"][0], "new-entry.js");
         let backup = PathBuf::from(format!("{}.bak", path.display()));
         assert!(backup.exists(), "expected a .bak backup before overwriting");
@@ -438,7 +481,10 @@ mod tests {
         let text = std::fs::read_to_string(&path).unwrap();
         let doc = text.parse::<toml_edit::DocumentMut>().unwrap();
         assert_eq!(doc["mcp_servers"]["envy"]["command"].as_str(), Some("node"));
-        assert_eq!(doc["mcp_servers"]["envy"]["args"][0].as_str(), Some("entry.js"));
+        assert_eq!(
+            doc["mcp_servers"]["envy"]["args"][0].as_str(),
+            Some("entry.js")
+        );
     }
 
     #[test]
@@ -454,7 +500,10 @@ mod tests {
         install_toml(&path, "entry.js", "/proj", false).unwrap();
 
         let text = std::fs::read_to_string(&path).unwrap();
-        assert!(text.contains("# a hand-written comment"), "comment should survive the merge");
+        assert!(
+            text.contains("# a hand-written comment"),
+            "comment should survive the merge"
+        );
         assert!(text.contains("[mcp_servers.other]"));
         let doc = text.parse::<toml_edit::DocumentMut>().unwrap();
         assert_eq!(doc["mcp_servers"]["other"]["command"].as_str(), Some("foo"));
@@ -472,7 +521,10 @@ mod tests {
 
         let text = std::fs::read_to_string(&path).unwrap();
         let doc = text.parse::<toml_edit::DocumentMut>().unwrap();
-        assert_eq!(doc["mcp_servers"]["envy"]["args"][0].as_str(), Some("new-entry.js"));
+        assert_eq!(
+            doc["mcp_servers"]["envy"]["args"][0].as_str(),
+            Some("new-entry.js")
+        );
         let backup = PathBuf::from(format!("{}.bak", path.display()));
         assert!(backup.exists());
     }
@@ -490,7 +542,9 @@ mod tests {
         std::fs::write(entry_dir.join("index.js"), "// fake entry").unwrap();
 
         let resolved = resolve_relative_to(&exe_dir).unwrap();
-        assert!(resolved.ends_with("mcp/dist/index.js") || resolved.ends_with("mcp\\dist\\index.js"));
+        assert!(
+            resolved.ends_with("mcp/dist/index.js") || resolved.ends_with("mcp\\dist\\index.js")
+        );
     }
 
     #[test]
@@ -502,6 +556,9 @@ mod tests {
         let result = resolve_relative_to(&exe_dir);
         assert!(result.is_err());
         let message = result.unwrap_err().to_string();
-        assert!(message.contains("--mcp-entry"), "error should point at the override flag");
+        assert!(
+            message.contains("--mcp-entry"),
+            "error should point at the override flag"
+        );
     }
 }
