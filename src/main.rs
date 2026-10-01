@@ -1,3 +1,4 @@
+mod banner;
 mod cli;
 mod commands;
 mod mcp_clients;
