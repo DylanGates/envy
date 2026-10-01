@@ -46,13 +46,15 @@ jobs:
         run: cargo test --manifest-path core/Cargo.toml
 
       - name: Run CLI Integration Tests
+        shell: bash
         run: |
           if [ "$RUNNER_OS" = "Linux" ]; then
-            dbus-run-session -- cargo test
+            eval $(dbus-launch --sh-syntax)
+            export $(echo -n "test" | gnome-keyring-daemon --unlock || true)
+            cargo test
           else
             cargo test
           fi
-
       - name: Build MCP Adapter
         working-directory: mcp
         run: |
