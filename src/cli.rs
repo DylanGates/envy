@@ -255,6 +255,22 @@ pub enum SshAction {
 
     /// List configured SSH host profiles.
     List,
+
+    /// Connect interactively to a configured SSH host profile.
+    Connect {
+        /// Name of the configured host profile.
+        name: String,
+    },
+
+    /// Run a command on a configured SSH host profile.
+    Exec {
+        /// Name of the configured host profile.
+        name: String,
+
+        /// Command to execute on the remote host.
+        #[arg(last = true, required = true)]
+        command: Vec<String>,
+    },
 }
 
 #[derive(Debug, Subcommand)]

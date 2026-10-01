@@ -17,6 +17,8 @@ pub fn run(action: SshAction, global: &GlobalArgs) -> anyhow::Result<()> {
             identity,
         } => add_host(name, host, port, user, identity, global),
         SshAction::List => list_hosts(global),
+        SshAction::Connect { name } => connect(name, global),
+        SshAction::Exec { name, command } => exec(name, command, global),
     }
 }
 
@@ -138,6 +140,133 @@ fn add_host(
     Ok(())
 }
 
+fn connect(name: String, global: &GlobalArgs) -> anyhow::Result<()> {
+    let cwd = std::env::current_dir()?;
+    let vault = envy_core::vault::open(&cwd)?;
+    let profile = vault.get_ssh_host(&name)?;
+
+    let private_key = vault
+        .get_secret(&profile.identity)
+        .with_context(|| format!("identity '{}' not found in vault", profile.identity))?;
+
+    let temp_key_file = tempfile::Builder::new()
+        .prefix("envy_ssh_key_")
+        .tempfile()?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = temp_key_file.as_file().metadata()?.permissions();
+        perms.set_mode(0o600);
+        temp_key_file.as_file().set_permissions(perms)?;
+    }
+
+    std::fs::write(temp_key_file.path(), &private_key)?;
+
+    vault.log_event(&AuditEvent {
+        subject: Some("cli"),
+        project: Some(&cwd.to_string_lossy()),
+        provider: Some("ssh"),
+        operation: "ssh_connect",
+        endpoint_host: Some(&profile.host),
+        outcome: "success",
+        redaction_summary: Some(&format!("interactive SSH connection to '{}'", name)),
+    })?;
+
+    if !global.quiet && !global.json {
+        println!(
+            "Connecting to {} ({}@{}:{})...",
+            profile.name, profile.user, profile.host, profile.port
+        );
+    }
+
+    let status = std::process::Command::new("ssh")
+        .arg("-i")
+        .arg(temp_key_file.path())
+        .arg("-p")
+        .arg(profile.port.to_string())
+        .arg(format!("{}@{}", profile.user, profile.host))
+        .status()
+        .with_context(|| "failed to execute ssh command")?;
+
+    if !status.success() {
+        anyhow::bail!("ssh exited with status {}", status);
+    }
+    Ok(())
+}
+
+fn exec(name: String, command: Vec<String>, global: &GlobalArgs) -> anyhow::Result<()> {
+    let cwd = std::env::current_dir()?;
+    let vault = envy_core::vault::open(&cwd)?;
+    let profile = vault.get_ssh_host(&name)?;
+
+    let private_key = vault
+        .get_secret(&profile.identity)
+        .with_context(|| format!("identity '{}' not found in vault", profile.identity))?;
+
+    let temp_dir = tempfile::tempdir()?;
+    let key_path = temp_dir.path().join("id_ed25519");
+    std::fs::write(&key_path, &private_key)?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&key_path)?.permissions();
+        perms.set_mode(0o600);
+        std::fs::set_permissions(&key_path, perms)?;
+    }
+    let cmd_str = command.join(" ");
+
+    vault.log_event(&AuditEvent {
+        subject: Some("cli"),
+        project: Some(&cwd.to_string_lossy()),
+        provider: Some("ssh"),
+        operation: "ssh_exec",
+        endpoint_host: Some(&profile.host),
+        outcome: "success",
+        redaction_summary: Some(&format!("ran command on '{}': {}", name, cmd_str)),
+    })?;
+
+    let output = std::process::Command::new("ssh")
+        .arg("-i")
+        .arg(&key_path)
+        .arg("-p")
+        .arg(profile.port.to_string())
+        .arg("-o")
+        .arg("IdentitiesOnly=yes")
+        .arg("-o")
+        .arg("ConnectTimeout=10")
+        .arg("-o")
+        .arg("BatchMode=yes")
+        .arg("-o")
+        .arg("StrictHostKeyChecking=accept-new")
+        .arg(format!("{}@{}", profile.user, profile.host))
+        .args(&command)
+        .output()
+        .with_context(|| "failed to execute remote command via ssh")?;
+    if global.json {
+        println!(
+            "{}",
+            serde_json::json!({
+                "status": if output.status.success() { "ok" } else { "error" },
+                "exit_code": output.status.code(),
+                "stdout": String::from_utf8_lossy(&output.stdout),
+                "stderr": String::from_utf8_lossy(&output.stderr),
+            })
+        );
+    } else {
+        std::io::Write::write_all(&mut std::io::stdout(), &output.stdout)?;
+        std::io::Write::write_all(&mut std::io::stderr(), &output.stderr)?;
+    }
+
+    if !output.status.success() {
+        anyhow::bail!(
+            "remote command failed with exit code {:?}",
+            output.status.code()
+        );
+    }
+    Ok(())
+}
 fn list_hosts(global: &GlobalArgs) -> anyhow::Result<()> {
     let cwd = std::env::current_dir()?;
     let vault = envy_core::vault::open(&cwd)?;
