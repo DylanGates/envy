@@ -118,7 +118,8 @@ pub fn scan(root: &Path, registry: &Registry) -> ScanResult {
     // the same name showing up in a *different* file — that's a real
     // finding (see `env_files`/cross-file-duplicate reporting in
     // `src/commands/scan.rs`), not noise to hide.
-    let mut seen_names: std::collections::HashSet<(PathBuf, String)> = std::collections::HashSet::new();
+    let mut seen_names: std::collections::HashSet<(PathBuf, String)> =
+        std::collections::HashSet::new();
     let mut env_files: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
 
     for path in walk::walk(root) {
@@ -267,7 +268,11 @@ mod tests {
     #[test]
     fn scan_records_every_env_family_file_found() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join(".env"), "STRIPE_KEY=sk_live_a1B2c3D4e5F6g7H8\n").unwrap();
+        std::fs::write(
+            dir.path().join(".env"),
+            "STRIPE_KEY=sk_live_a1B2c3D4e5F6g7H8\n",
+        )
+        .unwrap();
         std::fs::write(
             dir.path().join(".env.production"),
             "STRIPE_KEY=sk_live_z9Y8x7W6v5U4t3S2\n",
@@ -294,7 +299,11 @@ mod tests {
         // var_name alone, globally across the whole run, so the second
         // file's value was silently dropped and never shown at all.
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join(".env"), "STRIPE_KEY=sk_live_a1B2c3D4e5F6g7H8\n").unwrap();
+        std::fs::write(
+            dir.path().join(".env"),
+            "STRIPE_KEY=sk_live_a1B2c3D4e5F6g7H8\n",
+        )
+        .unwrap();
         std::fs::write(
             dir.path().join(".env.production"),
             "STRIPE_KEY=sk_live_z9Y8x7W6v5U4t3S2\n",
@@ -304,9 +313,16 @@ mod tests {
         let registry = Registry::from_descriptors(vec![]);
         let result = scan(dir.path(), &registry);
 
-        let stripe_candidates: Vec<&Candidate> =
-            result.candidates.iter().filter(|c| c.var_name == "STRIPE_KEY").collect();
-        assert_eq!(stripe_candidates.len(), 2, "expected one candidate per file");
+        let stripe_candidates: Vec<&Candidate> = result
+            .candidates
+            .iter()
+            .filter(|c| c.var_name == "STRIPE_KEY")
+            .collect();
+        assert_eq!(
+            stripe_candidates.len(),
+            2,
+            "expected one candidate per file"
+        );
         let mut paths: Vec<String> = stripe_candidates
             .iter()
             .map(|c| c.path.file_name().unwrap().to_string_lossy().to_string())
@@ -327,8 +343,11 @@ mod tests {
         let registry = Registry::from_descriptors(vec![]);
         let result = scan(dir.path(), &registry);
 
-        let stripe_candidates: Vec<&Candidate> =
-            result.candidates.iter().filter(|c| c.var_name == "STRIPE_KEY").collect();
+        let stripe_candidates: Vec<&Candidate> = result
+            .candidates
+            .iter()
+            .filter(|c| c.var_name == "STRIPE_KEY")
+            .collect();
         assert_eq!(stripe_candidates.len(), 1);
     }
 }

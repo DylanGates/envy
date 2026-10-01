@@ -79,7 +79,9 @@ pub fn run(
     } else if !global.quiet {
         match (&result.detail, result.http_status) {
             (Some(detail), _) => println!("{}: {} — {}", reference, result.status.as_str(), detail),
-            (None, Some(code)) => println!("{}: {} (HTTP {code})", reference, result.status.as_str()),
+            (None, Some(code)) => {
+                println!("{}: {} (HTTP {code})", reference, result.status.as_str())
+            }
             (None, None) => println!("{}: {} (no response)", reference, result.status.as_str()),
         }
     }

@@ -626,7 +626,12 @@ mod tests {
         let vault = init_with_keystore(dir.path(), &keystore).unwrap();
 
         let grant = vault
-            .grant_consent("stripe", "make_authenticated_request", std::time::Duration::from_secs(300), Some("cli"))
+            .grant_consent(
+                "stripe",
+                "make_authenticated_request",
+                std::time::Duration::from_secs(300),
+                Some("cli"),
+            )
             .unwrap();
         assert_eq!(grant.provider, "stripe");
         assert_eq!(grant.operation, "make_authenticated_request");
@@ -646,7 +651,12 @@ mod tests {
 
         // Grant with a TTL already in the past.
         vault
-            .grant_consent("stripe", "make_authenticated_request", std::time::Duration::from_secs(0), None)
+            .grant_consent(
+                "stripe",
+                "make_authenticated_request",
+                std::time::Duration::from_secs(0),
+                None,
+            )
             .unwrap();
         // Zero-second TTL can land exactly on "now" depending on clock
         // resolution; sleep past it so the comparison is unambiguous.
@@ -676,10 +686,17 @@ mod tests {
         let keystore = InMemoryKeyStore::new();
         let vault = init_with_keystore(dir.path(), &keystore).unwrap();
         vault
-            .grant_consent("stripe", "make_authenticated_request", std::time::Duration::from_secs(300), None)
+            .grant_consent(
+                "stripe",
+                "make_authenticated_request",
+                std::time::Duration::from_secs(300),
+                None,
+            )
             .unwrap();
 
-        let revoked = vault.revoke_consent("stripe", "make_authenticated_request").unwrap();
+        let revoked = vault
+            .revoke_consent("stripe", "make_authenticated_request")
+            .unwrap();
         assert_eq!(revoked, 1);
         assert!(
             !vault
@@ -693,7 +710,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let keystore = InMemoryKeyStore::new();
         let vault = init_with_keystore(dir.path(), &keystore).unwrap();
-        let revoked = vault.revoke_consent("stripe", "make_authenticated_request").unwrap();
+        let revoked = vault
+            .revoke_consent("stripe", "make_authenticated_request")
+            .unwrap();
         assert_eq!(revoked, 0);
     }
 
@@ -703,10 +722,20 @@ mod tests {
         let keystore = InMemoryKeyStore::new();
         let vault = init_with_keystore(dir.path(), &keystore).unwrap();
         vault
-            .grant_consent("stripe", "make_authenticated_request", std::time::Duration::from_secs(300), None)
+            .grant_consent(
+                "stripe",
+                "make_authenticated_request",
+                std::time::Duration::from_secs(300),
+                None,
+            )
             .unwrap();
         vault
-            .grant_consent("openai", "make_authenticated_request", std::time::Duration::from_secs(300), None)
+            .grant_consent(
+                "openai",
+                "make_authenticated_request",
+                std::time::Duration::from_secs(300),
+                None,
+            )
             .unwrap();
 
         let grants = vault.list_consents().unwrap();

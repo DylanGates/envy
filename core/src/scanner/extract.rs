@@ -62,7 +62,10 @@ pub(super) fn is_json_file(path: &Path) -> bool {
 
 /// Returns true for YAML files.
 pub(super) fn is_yaml_file(path: &Path) -> bool {
-    matches!(path.extension().and_then(|e| e.to_str()), Some("yaml" | "yml"))
+    matches!(
+        path.extension().and_then(|e| e.to_str()),
+        Some("yaml" | "yml")
+    )
 }
 
 /// Returns true for TOML files.
@@ -402,7 +405,8 @@ mod tests {
 
     #[test]
     fn json_extracts_secret_keys() {
-        let text = r#"{"STRIPE_KEY": "sk_live_json12345", "nested": {"api_key": "nested_secret_val"}}"#;
+        let text =
+            r#"{"STRIPE_KEY": "sk_live_json12345", "nested": {"api_key": "nested_secret_val"}}"#;
         let candidates = parse_json_file(text);
         assert_eq!(candidates.len(), 2);
     }

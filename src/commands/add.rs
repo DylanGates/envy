@@ -13,9 +13,8 @@ pub fn run(name: Option<String>, from_env: bool, global: &GlobalArgs) -> anyhow:
     };
 
     let value = if from_env {
-        std::env::var(&name).with_context(|| {
-            format!("environment variable '{name}' is not set or empty")
-        })?
+        std::env::var(&name)
+            .with_context(|| format!("environment variable '{name}' is not set or empty"))?
     } else if global.non_interactive {
         let mut line = String::new();
         std::io::stdin()
