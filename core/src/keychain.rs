@@ -26,17 +26,39 @@ pub struct OsKeychain;
 impl KeyStore for OsKeychain {
     fn store_key(&self, vault_id: &str, key: &[u8; 32]) -> Result<(), CoreError> {
         let entry = keyring::Entry::new(SERVICE, vault_id)?;
-        entry.set_password(&BASE64.encode(key))?;
-        Ok(())
+        let encoded = BASE64.encode(key);
+        // Retry with backoff to handle transient OS keychain stalls (e.g. securityd)
+        let mut last_err = None;
+        for attempt in 0..3 {
+            if attempt > 0 {
+                std::thread::sleep(std::time::Duration::from_millis(150 * (1 << attempt)));
+            }
+            match entry.set_password(&encoded) {
+                Ok(()) => return Ok(()),
+                Err(e) => last_err = Some(e),
+            }
+        }
+        Err(last_err.unwrap().into())
     }
 
     fn load_key(&self, vault_id: &str) -> Result<[u8; 32], CoreError> {
         let entry = keyring::Entry::new(SERVICE, vault_id)?;
-        let encoded = entry.get_password()?;
-        let bytes = BASE64
-            .decode(encoded)
-            .map_err(|_| CoreError::DecryptionFailed)?;
-        <[u8; 32]>::try_from(bytes).map_err(|_| CoreError::DecryptionFailed)
+        let mut last_err = None;
+        for attempt in 0..3 {
+            if attempt > 0 {
+                std::thread::sleep(std::time::Duration::from_millis(150 * (1 << attempt)));
+            }
+            match entry.get_password() {
+                Ok(encoded) => {
+                    let bytes = BASE64
+                        .decode(encoded)
+                        .map_err(|_| CoreError::DecryptionFailed)?;
+                    return <[u8; 32]>::try_from(bytes).map_err(|_| CoreError::DecryptionFailed);
+                }
+                Err(e) => last_err = Some(e),
+            }
+        }
+        Err(last_err.unwrap().into())
     }
 
     fn delete_key(&self, vault_id: &str) -> Result<(), CoreError> {

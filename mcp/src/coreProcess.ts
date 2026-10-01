@@ -22,9 +22,12 @@ const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 export function resolveEnvyBinary(): string {
   // moduleDir is cli/mcp/dist when compiled; the Cargo build output for
   // the cli crate lives at cli/target/{debug,release}/envy.
+  const isWindows = process.platform === "win32";
+  const exeName = isWindows ? "envy.exe" : "envy";
   const candidates = [
-    path.join(moduleDir, "..", "..", "target", "debug", "envy"),
-    path.join(moduleDir, "..", "..", "target", "release", "envy"),
+    path.join(moduleDir, "..", "..", "target", "debug", exeName),
+    path.join(moduleDir, "..", "..", "target", "release", exeName),
+    path.join(moduleDir, "..", "..", "bin", exeName),
   ];
   for (const candidate of candidates) {
     if (existsSync(candidate)) {
