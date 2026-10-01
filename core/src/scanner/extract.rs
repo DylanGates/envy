@@ -36,9 +36,161 @@ pub(super) fn extract_candidates(path: &Path) -> Result<Vec<RawCandidate>, Strin
 
     if is_env_file(path) {
         Ok(parse_env_file(text))
+    } else if is_dockerfile(path) {
+        Ok(parse_dockerfile(text))
+    } else if is_json_file(path) {
+        Ok(parse_json_file(text))
+    } else if is_yaml_file(path) {
+        Ok(parse_yaml_file(text))
+    } else if is_toml_file(path) {
+        Ok(parse_toml_file(text))
     } else {
         Ok(parse_generic(text))
     }
+}
+
+/// Returns true for Dockerfile and related files (e.g. Dockerfile.dev, Dockerfile.prod).
+pub(super) fn is_dockerfile(path: &Path) -> bool {
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    name == "Dockerfile" || name.starts_with("Dockerfile.")
+}
+
+/// Returns true for JSON files.
+pub(super) fn is_json_file(path: &Path) -> bool {
+    path.extension().and_then(|e| e.to_str()) == Some("json")
+}
+
+/// Returns true for YAML files.
+pub(super) fn is_yaml_file(path: &Path) -> bool {
+    matches!(path.extension().and_then(|e| e.to_str()), Some("yaml" | "yml"))
+}
+
+/// Returns true for TOML files.
+pub(super) fn is_toml_file(path: &Path) -> bool {
+    path.extension().and_then(|e| e.to_str()) == Some("toml")
+}
+
+/// Parses a Dockerfile, looking for `ENV KEY=VALUE` and `ARG KEY=VALUE` declarations.
+fn parse_dockerfile(text: &str) -> Vec<RawCandidate> {
+    let mut candidates = Vec::new();
+    for (i, line) in text.lines().enumerate() {
+        let trimmed = line.trim();
+        let stripped = if let Some(rest) = trimmed.strip_prefix("ENV ") {
+            rest.trim()
+        } else if let Some(rest) = trimmed.strip_prefix("ARG ") {
+            rest.trim()
+        } else {
+            continue;
+        };
+
+        if let Some(candidate) = extract_assignment(stripped, i + 1) {
+            if candidate.value_str.len() >= 8 {
+                candidates.push(candidate);
+            }
+        } else if let Some(sep) = stripped.find('=') {
+            let key = stripped[..sep].trim();
+            let val = stripped[sep + 1..].trim().trim_matches(['"', '\'']);
+            if is_upper_snake(key) && val.len() >= 8 {
+                candidates.push(RawCandidate {
+                    line: i + 1,
+                    var_name: key.to_string(),
+                    value_str: val.to_string(),
+                });
+            }
+        }
+    }
+    candidates
+}
+
+/// Parses JSON files looking for UPPER_SNAKE_CASE keys or common secret keys.
+fn parse_json_file(text: &str) -> Vec<RawCandidate> {
+    let Ok(val) = serde_json::from_str::<serde_json::Value>(text) else {
+        return parse_generic(text);
+    };
+
+    let mut candidates = Vec::new();
+    collect_json_values(&val, &mut candidates);
+    candidates
+}
+
+fn collect_json_values(val: &serde_json::Value, out: &mut Vec<RawCandidate>) {
+    match val {
+        serde_json::Value::Object(map) => {
+            for (k, v) in map {
+                if let serde_json::Value::String(s) = v {
+                    if (is_upper_snake(k) || looks_like_secret_key(k)) && s.len() >= 8 {
+                        out.push(RawCandidate {
+                            line: 1,
+                            var_name: k.clone(),
+                            value_str: s.clone(),
+                        });
+                    }
+                } else {
+                    collect_json_values(v, out);
+                }
+            }
+        }
+        serde_json::Value::Array(arr) => {
+            for item in arr {
+                collect_json_values(item, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Parses TOML files looking for UPPER_SNAKE_CASE keys or common secret keys.
+fn parse_toml_file(text: &str) -> Vec<RawCandidate> {
+    let Ok(val) = toml::from_str::<toml::Value>(text) else {
+        return parse_generic(text);
+    };
+
+    let mut candidates = Vec::new();
+    collect_toml_values(&val, &mut candidates);
+    candidates
+}
+
+fn collect_toml_values(val: &toml::Value, out: &mut Vec<RawCandidate>) {
+    match val {
+        toml::Value::Table(map) => {
+            for (k, v) in map {
+                if let toml::Value::String(s) = v {
+                    if (is_upper_snake(k) || looks_like_secret_key(k)) && s.len() >= 8 {
+                        out.push(RawCandidate {
+                            line: 1,
+                            var_name: k.clone(),
+                            value_str: s.clone(),
+                        });
+                    }
+                } else {
+                    collect_toml_values(v, out);
+                }
+            }
+        }
+        toml::Value::Array(arr) => {
+            for item in arr {
+                collect_toml_values(item, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Parses YAML-formatted files using generic line-by-line fallback.
+fn parse_yaml_file(text: &str) -> Vec<RawCandidate> {
+    parse_generic(text)
+}
+
+/// Check if a lower/mixed key name matches common secret terminology.
+fn looks_like_secret_key(key: &str) -> bool {
+    let lower = key.to_ascii_lowercase();
+    lower.contains("token")
+        || lower.contains("secret")
+        || lower.contains("password")
+        || lower.contains("apikey")
+        || lower.contains("api_key")
+        || lower.contains("private_key")
+        || lower.contains("access_key")
 }
 
 /// Returns true for files that use the `.env` key=value format.
@@ -236,5 +388,29 @@ mod tests {
         assert!(!is_upper_snake("stripeKey"));
         assert!(!is_upper_snake("Stripe_Key"));
         assert!(!is_upper_snake(""));
+    }
+    #[test]
+    fn dockerfile_extracts_env_and_arg() {
+        let text = "FROM alpine\nENV STRIPE_API_KEY=sk_live_1234567890\nARG SECRET_TOKEN=\"token_abcdef12345\"\n";
+        let candidates = parse_dockerfile(text);
+        assert_eq!(candidates.len(), 2);
+        assert_eq!(candidates[0].var_name, "STRIPE_API_KEY");
+        assert_eq!(candidates[0].value_str, "sk_live_1234567890");
+        assert_eq!(candidates[1].var_name, "SECRET_TOKEN");
+        assert_eq!(candidates[1].value_str, "token_abcdef12345");
+    }
+
+    #[test]
+    fn json_extracts_secret_keys() {
+        let text = r#"{"STRIPE_KEY": "sk_live_json12345", "nested": {"api_key": "nested_secret_val"}}"#;
+        let candidates = parse_json_file(text);
+        assert_eq!(candidates.len(), 2);
+    }
+
+    #[test]
+    fn toml_extracts_secret_keys() {
+        let text = "[auth]\napi_token = \"toml_token_123456\"\nOPENAI_KEY = \"sk-openai-123456\"\n";
+        let candidates = parse_toml_file(text);
+        assert_eq!(candidates.len(), 2);
     }
 }

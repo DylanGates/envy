@@ -14,7 +14,7 @@ pub fn run(
     global: &GlobalArgs,
 ) -> anyhow::Result<()> {
     match (encrypted, env, example) {
-        (Some(_), None, None) => super::not_implemented("export --encrypted", global),
+        (Some(path), None, None) => export_encrypted(&path, force, global),
         (None, Some(path), None) => export_env(&path, force, global),
         (None, None, Some(path)) => export_example(&path, force, global),
         (None, None, None) => bail!(
@@ -40,6 +40,82 @@ fn backup_if_exists(path: &Path, force: bool) -> anyhow::Result<()> {
         let backup = PathBuf::from(format!("{}.bak", path.display()));
         std::fs::copy(path, &backup)
             .with_context(|| format!("failed to back up {} to {}", path.display(), backup.display()))?;
+    }
+    Ok(())
+}
+fn export_encrypted(path: &Path, force: bool, global: &GlobalArgs) -> anyhow::Result<()> {
+    let cwd = std::env::current_dir()?;
+    let vault = envy_core::vault::open(&cwd)?;
+    let secrets = vault.list_secrets()?;
+
+    if secrets.is_empty() {
+        if !global.quiet {
+            println!("Vault is empty — nothing to export.");
+        }
+        return Ok(());
+    }
+
+    backup_if_exists(path, force)?;
+
+    let password = if global.non_interactive {
+        let mut buf = String::new();
+        std::io::stdin()
+            .read_line(&mut buf)
+            .context("failed to read backup password from stdin")?;
+        let trimmed = buf.trim_end_matches(&['\r', '\n'][..]).to_string();
+        if trimmed.is_empty() {
+            bail!("backup password cannot be empty");
+        }
+        trimmed
+    } else {
+        let p1 = rpassword::prompt_password("Enter encryption password for backup: ")
+            .context("failed to read password")?;
+        if p1.is_empty() {
+            bail!("backup password cannot be empty");
+        }
+        let p2 = rpassword::prompt_password("Confirm encryption password: ")
+            .context("failed to read confirmation password")?;
+        if p1 != p2 {
+            bail!("passwords do not match");
+        }
+        p1
+    };
+
+    let encrypted_payload = envy_core::backup::export_encrypted(&vault, password.as_bytes())
+        .context("failed to generate encrypted backup")?;
+
+    std::fs::write(path, &encrypted_payload)
+        .with_context(|| format!("failed to write {}", path.display()))?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(path)?.permissions();
+        perms.set_mode(0o600);
+        std::fs::set_permissions(path, perms)?;
+    }
+
+    let count = secrets.len();
+    vault.log_event(&AuditEvent {
+        subject: Some("cli"),
+        project: Some(&cwd.to_string_lossy()),
+        provider: None,
+        operation: "export_encrypted",
+        endpoint_host: None,
+        outcome: "success",
+        redaction_summary: Some(&format!(
+            "exported {count} encrypted secret(s) to {}",
+            path.display()
+        )),
+    })?;
+
+    if global.json {
+        println!(r#"{{"status":"ok","exported":{count},"path":"{}"}}"#, path.display());
+    } else if !global.quiet {
+        println!(
+            "Exported {count} encrypted secret(s) to {}",
+            path.display()
+        );
     }
     Ok(())
 }
