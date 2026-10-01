@@ -59,6 +59,10 @@ pub enum Commands {
     Add {
         /// Name of the candidate to import.
         name: Option<String>,
+
+        /// Read the secret value directly from an environment variable of the same name.
+        #[arg(long = "from-env")]
+        from_env: bool,
     },
 
     /// List secrets currently held in the vault.
@@ -124,6 +128,10 @@ pub enum Commands {
         /// Restrict log output to a single project.
         #[arg(long)]
         project: Option<PathBuf>,
+
+        /// Follow / poll audit log live in real time.
+        #[arg(short = 'f', long = "follow")]
+        follow: bool,
     },
 
     /// Export the vault as an encrypted backup file, write a plaintext

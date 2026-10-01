@@ -5,14 +5,18 @@ use envy_core::audit::AuditEvent;
 
 use crate::cli::GlobalArgs;
 
-pub fn run(name: Option<String>, global: &GlobalArgs) -> anyhow::Result<()> {
+pub fn run(name: Option<String>, from_env: bool, global: &GlobalArgs) -> anyhow::Result<()> {
     let name = match name {
         Some(name) => name,
         None if !global.non_interactive => prompt_name()?,
         None => bail!("NAME is required in --non-interactive mode"),
     };
 
-    let value = if global.non_interactive {
+    let value = if from_env {
+        std::env::var(&name).with_context(|| {
+            format!("environment variable '{name}' is not set or empty")
+        })?
+    } else if global.non_interactive {
         let mut line = String::new();
         std::io::stdin()
             .read_line(&mut line)

@@ -23,7 +23,7 @@ pub fn dispatch(cli: Cli) -> anyhow::Result<()> {
     match cli.command {
         Commands::Init => init::run(global),
         Commands::Scan { path } => scan::run(path, global),
-        Commands::Add { name } => add::run(name, global),
+        Commands::Add { name, from_env } => add::run(name, from_env, global),
         Commands::List => list::run(global),
         Commands::Show {
             reference,
@@ -39,7 +39,7 @@ pub fn dispatch(cli: Cli) -> anyhow::Result<()> {
         } => check::run(reference, project, url, auth_style, header_name, provider, global),
         Commands::Run { command } => run::run(command, global),
         Commands::Expose { action } => expose::run(action, global),
-        Commands::Log { project } => log::run(project, global),
+        Commands::Log { project, follow } => log::run(project, follow, global),
         Commands::Export { encrypted, env, example, force } => {
             export::run(encrypted, env, example, force, global)
         }
