@@ -56,7 +56,10 @@ pub fn run(path: Option<PathBuf>, global: &GlobalArgs) -> anyhow::Result<()> {
                 paths.push(c.path.as_path());
             }
         }
-        by_name.into_iter().filter(|(_, paths)| paths.len() > 1).collect()
+        by_name
+            .into_iter()
+            .filter(|(_, paths)| paths.len() > 1)
+            .collect()
     };
 
     if global.json {
@@ -76,8 +79,11 @@ pub fn run(path: Option<PathBuf>, global: &GlobalArgs) -> anyhow::Result<()> {
                 })
             })
             .collect();
-        let env_files_json: Vec<String> =
-            result.env_files.iter().map(|p| p.display().to_string()).collect();
+        let env_files_json: Vec<String> = result
+            .env_files
+            .iter()
+            .map(|p| p.display().to_string())
+            .collect();
         let cross_file_duplicates_json: Vec<_> = cross_file_duplicates
             .iter()
             .map(|(var_name, paths)| {
@@ -98,30 +104,29 @@ pub fn run(path: Option<PathBuf>, global: &GlobalArgs) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    if result.env_files.len() > 1 {
-        if !global.quiet {
-            let names: Vec<String> =
-                result.env_files.iter().map(|p| p.display().to_string()).collect();
-            println!(
-                "⚠  {} .env-family files found: {} — envy can't tell which one your app \
-                 actually loads; review this before assuming secrets are only in one place.\n",
-                result.env_files.len(),
-                names.join(", ")
-            );
-        }
+    if result.env_files.len() > 1 && !global.quiet {
+        let names: Vec<String> = result
+            .env_files
+            .iter()
+            .map(|p| p.display().to_string())
+            .collect();
+        println!(
+            "⚠  {} .env-family files found: {} — envy can't tell which one your app \
+             actually loads; review this before assuming secrets are only in one place.\n",
+            result.env_files.len(),
+            names.join(", ")
+        );
     }
 
-    if !cross_file_duplicates.is_empty() {
-        if !global.quiet {
-            for (var_name, paths) in &cross_file_duplicates {
-                let names: Vec<String> = paths.iter().map(|p| p.display().to_string()).collect();
-                println!(
-                    "⚠  '{var_name}' is defined in more than one file: {} — values may differ; \
-                     envy imports each one under the same vault name, so only the first import \
-                     wins.\n",
-                    names.join(", ")
-                );
-            }
+    if !cross_file_duplicates.is_empty() && !global.quiet {
+        for (var_name, paths) in &cross_file_duplicates {
+            let names: Vec<String> = paths.iter().map(|p| p.display().to_string()).collect();
+            println!(
+                "⚠  '{var_name}' is defined in more than one file: {} — values may differ; \
+                 envy imports each one under the same vault name, so only the first import \
+                 wins.\n",
+                names.join(", ")
+            );
         }
     }
 

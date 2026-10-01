@@ -36,13 +36,24 @@ pub fn dispatch(cli: Cli) -> anyhow::Result<()> {
             auth_style,
             header_name,
             provider,
-        } => check::run(reference, project, url, auth_style, header_name, provider, global),
+        } => check::run(
+            reference,
+            project,
+            url,
+            auth_style,
+            header_name,
+            provider,
+            global,
+        ),
         Commands::Run { command } => run::run(command, global),
         Commands::Expose { action } => expose::run(action, global),
         Commands::Log { project, follow } => log::run(project, follow, global),
-        Commands::Export { encrypted, env, example, force } => {
-            export::run(encrypted, env, example, force, global)
-        }
+        Commands::Export {
+            encrypted,
+            env,
+            example,
+            force,
+        } => export::run(encrypted, env, example, force, global),
         Commands::Import { encrypted, env } => import::run(encrypted, env, global),
         Commands::Provider { action } => provider::run(action, global),
         Commands::Mcp { action } => mcp::run(action, global),

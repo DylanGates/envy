@@ -47,10 +47,12 @@ fn serve(global: &GlobalArgs) -> anyhow::Result<()> {
                 let quiet = global.quiet;
                 let ctx = ctx.clone();
                 std::thread::spawn(move || {
-                    if let Err(e) = envy_core::rpc::serve_connection(stream, &ctx) {
-                        if !quiet {
+                    if !quiet {
+                        if let Err(e) = envy_core::rpc::serve_connection(stream, &ctx) {
                             eprintln!("envy mcp: connection error: {e}");
                         }
+                    } else {
+                        let _ = envy_core::rpc::serve_connection(stream, &ctx);
                     }
                 });
             }

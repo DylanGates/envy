@@ -47,7 +47,10 @@ pub fn run(project: Option<PathBuf>, follow: bool, global: &GlobalArgs) -> anyho
     Ok(())
 }
 
-fn print_event(event: &envy_core::audit::AuditEventRecord, global: &GlobalArgs) -> anyhow::Result<()> {
+fn print_event(
+    event: &envy_core::audit::AuditEventRecord,
+    global: &GlobalArgs,
+) -> anyhow::Result<()> {
     if global.json {
         println!("{}", serde_json::to_string(event)?);
     } else if !global.quiet {

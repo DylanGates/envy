@@ -213,8 +213,13 @@ fn install(path: PathBuf, force: bool, global: &GlobalArgs) -> anyhow::Result<()
             );
         }
         let backup = PathBuf::from(format!("{}.bak", dest.display()));
-        std::fs::copy(&dest, &backup)
-            .with_context(|| format!("failed to back up {} to {}", dest.display(), backup.display()))?;
+        std::fs::copy(&dest, &backup).with_context(|| {
+            format!(
+                "failed to back up {} to {}",
+                dest.display(),
+                backup.display()
+            )
+        })?;
     }
 
     std::fs::copy(&path, &dest)
@@ -227,7 +232,11 @@ fn install(path: PathBuf, force: bool, global: &GlobalArgs) -> anyhow::Result<()
             dest.display()
         );
     } else if !global.quiet {
-        println!("Installed provider '{}' at {}", descriptor.id, dest.display());
+        println!(
+            "Installed provider '{}' at {}",
+            descriptor.id,
+            dest.display()
+        );
     }
     Ok(())
 }
@@ -250,11 +259,15 @@ fn list(global: &GlobalArgs) -> anyhow::Result<()> {
             .collect();
         let warnings_json: Vec<_> = warnings
             .iter()
-            .map(|w| serde_json::json!({"path": w.path.display().to_string(), "message": w.message}))
+            .map(
+                |w| serde_json::json!({"path": w.path.display().to_string(), "message": w.message}),
+            )
             .collect();
         println!(
             "{}",
-            serde_json::to_string(&serde_json::json!({"providers": providers, "warnings": warnings_json}))?
+            serde_json::to_string(
+                &serde_json::json!({"providers": providers, "warnings": warnings_json})
+            )?
         );
         return Ok(());
     }
@@ -264,7 +277,11 @@ fn list(global: &GlobalArgs) -> anyhow::Result<()> {
             println!("Provider directory: {}\n", dir.display());
         }
         for w in &warnings {
-            println!("  ⚠  ignoring invalid descriptor at {}: {}", w.path.display(), w.message);
+            println!(
+                "  ⚠  ignoring invalid descriptor at {}: {}",
+                w.path.display(),
+                w.message
+            );
         }
         if descriptors.is_empty() {
             println!("No providers installed.");
@@ -275,7 +292,11 @@ fn list(global: &GlobalArgs) -> anyhow::Result<()> {
                 d.id,
                 d.name,
                 d.domains.join(","),
-                d.credentials.iter().map(|c| c.name.as_str()).collect::<Vec<_>>().join(","),
+                d.credentials
+                    .iter()
+                    .map(|c| c.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(","),
             );
         }
     }
