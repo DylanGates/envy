@@ -6,3 +6,6 @@ mcp/dist/
 
 # core/ (Rust core crate, path dependency of this package)
 core/target/
+
+.DS_Store
+**/.DS_Store
