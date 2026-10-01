@@ -12,9 +12,11 @@ pub mod keychain;
 pub mod policy;
 pub mod provider;
 pub mod redact;
+pub mod remediate;
 pub mod request;
 pub mod rpc;
 pub mod scanner;
+pub mod ssh;
 pub mod vault;
 
 pub use error::CoreError;

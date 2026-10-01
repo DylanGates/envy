@@ -89,8 +89,40 @@ impl Candidate {
         })?;
         Ok(())
     }
-}
 
+    /// Imports this candidate into the vault and replaces the plaintext value in the
+    /// source file with `envy://<var_name>`, creating a `.bak` file first.
+    pub fn import_and_remediate(&self, vault: &Vault) -> Result<PathBuf, CoreError> {
+        let value_str = String::from_utf8(self.value.clone()).map_err(|_| {
+            CoreError::InvalidRequest(
+                "secret contains non-UTF-8 bytes; cannot remediate in text file".to_string(),
+            )
+        })?;
+
+        // Import into vault first (fail closed if secret already exists)
+        self.import_into(vault)?;
+
+        // Remediate source file
+        let backup = crate::remediate::remediate_file(&self.path, &self.var_name, &value_str)?;
+
+        vault.log_event(&AuditEvent {
+            subject: Some("cli"),
+            project: None,
+            provider: self.findings.first().map(|f| f.provider_id.as_str()),
+            operation: "remediate",
+            endpoint_host: None,
+            outcome: "success",
+            redaction_summary: Some(&format!(
+                "remediated '{}' in {} (backup at {})",
+                self.var_name,
+                self.path.display(),
+                backup.display()
+            )),
+        })?;
+
+        Ok(backup)
+    }
+}
 /// Result of a scan run.
 pub struct ScanResult {
     /// All candidates found, in file-walk order.

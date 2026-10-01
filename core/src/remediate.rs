@@ -3,19 +3,22 @@
 //! Replaces plaintext secrets in source and configuration files with `envy://<name>`
 //! reference handles, creating atomic backup copies (`<file>.bak`) before touching disk.
 
-use std::path::{Path, PathBuf};
 use crate::error::CoreError;
+use std::path::{Path, PathBuf};
 
 /// Remediates a single file by replacing `target_value` associated with `var_name`
 /// with `envy://<var_name>`.
 ///
 /// Always writes `<file>.bak` containing the original file contents before mutation.
-pub fn remediate_file(path: &Path, var_name: &str, target_value: &str) -> Result<PathBuf, CoreError> {
-    let content = std::fs::read_to_string(path)
-        .map_err(|e| CoreError::Io {
-            path: path.to_path_buf(),
-            source: e,
-        })?;
+pub fn remediate_file(
+    path: &Path,
+    var_name: &str,
+    target_value: &str,
+) -> Result<PathBuf, CoreError> {
+    let content = std::fs::read_to_string(path).map_err(|e| CoreError::Io {
+        path: path.to_path_buf(),
+        source: e,
+    })?;
 
     if !content.contains(target_value) {
         return Err(CoreError::InvalidRequest(format!(

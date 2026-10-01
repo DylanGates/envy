@@ -38,6 +38,15 @@ CREATE TABLE IF NOT EXISTS consent_grants (
     subject TEXT,
     revoked_at TEXT
 );
+CREATE TABLE IF NOT EXISTS ssh_hosts (
+    name TEXT PRIMARY KEY,
+    host TEXT NOT NULL,
+    port INTEGER NOT NULL DEFAULT 22,
+    user TEXT NOT NULL,
+    identity TEXT NOT NULL,
+    known_host_required INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 "#;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -259,6 +268,76 @@ impl Vault {
             revoked_at: row.get(6)?,
             is_active: row.get(7)?,
         })
+    }
+    /// Registers or updates an SSH host profile.
+    pub fn add_ssh_host(&self, profile: &crate::ssh::SshHostProfile) -> Result<(), CoreError> {
+        self.conn.execute(
+            "INSERT INTO ssh_hosts (name, host, port, user, identity, known_host_required) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
+             ON CONFLICT(name) DO UPDATE SET host=?2, port=?3, user=?4, identity=?5, known_host_required=?6",
+            rusqlite::params![
+                profile.name,
+                profile.host,
+                profile.port,
+                profile.user,
+                profile.identity,
+                if profile.known_host_required { 1 } else { 0 },
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Lists all configured SSH host profiles.
+    pub fn list_ssh_hosts(&self) -> Result<Vec<crate::ssh::SshHostProfile>, CoreError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT name, host, port, user, identity, known_host_required FROM ssh_hosts ORDER BY name ASC",
+        )?;
+
+        let rows = stmt.query_map([], |row| {
+            let req: i32 = row.get(5)?;
+            Ok(crate::ssh::SshHostProfile {
+                name: row.get(0)?,
+                host: row.get(1)?,
+                port: row.get(2)?,
+                user: row.get(3)?,
+                identity: row.get(4)?,
+                known_host_required: req != 0,
+            })
+        })?;
+
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
+    }
+
+    /// Retrieves an SSH host profile by name.
+    pub fn get_ssh_host(&self, name: &str) -> Result<crate::ssh::SshHostProfile, CoreError> {
+        use rusqlite::OptionalExtension;
+        let res: Option<crate::ssh::SshHostProfile> = self
+            .conn
+            .query_row(
+                "SELECT name, host, port, user, identity, known_host_required FROM ssh_hosts WHERE name = ?1",
+                rusqlite::params![name],
+                |row| {
+                    let req: i32 = row.get(5)?;
+                    Ok(crate::ssh::SshHostProfile {
+                        name: row.get(0)?,
+                        host: row.get(1)?,
+                        port: row.get(2)?,
+                        user: row.get(3)?,
+                        identity: row.get(4)?,
+                        known_host_required: req != 0,
+                    })
+                },
+            )
+            .optional()?;
+
+        match res {
+            Some(p) => Ok(p),
+            None => Err(CoreError::SecretNotFound(format!("SSH host '{name}'"))),
+        }
     }
 }
 
