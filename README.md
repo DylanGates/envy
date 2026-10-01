@@ -1,6 +1,20 @@
-# envy
+<p align="center">
+  <img src="assets/logo.png" alt="envy logo" width="180" />
+</p>
 
-> **Your credentials are yours, not your agent's.**
+<h1 align="center">envy</h1>
+
+<p align="center">
+  <strong>Your credentials are yours, not your agent's.</strong>
+</p>
+
+<p align="center">
+  <a href="https://github.com/DylanGates/envy/actions"><img src="https://github.com/DylanGates/envy/workflows/CI/badge.svg" alt="CI Status" /></a>
+  <a href="https://github.com/DylanGates/envy/releases"><img src="https://img.shields.io/github/v/release/DylanGates/envy?include_prereleases" alt="Latest Release" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg" alt="License" /></a>
+</p>
+
+---
 
 **envy** is an open-source, local-first secrets manager and credential gateway designed for developers and AI coding agents (Claude Code, Cursor, Codex, etc.).
 
