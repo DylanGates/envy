@@ -121,16 +121,17 @@ struct MakeAuthenticatedRequestParams {
 }
 
 fn handle_make_authenticated_request(request: &Request, ctx: &RpcContext) -> Response {
-    let params: MakeAuthenticatedRequestParams = match serde_json::from_value(request.params.clone()) {
-        Ok(params) => params,
-        Err(e) => {
-            return Response::error(
-                request.id.clone(),
-                INVALID_PARAMS,
-                format!("invalid params: {e}"),
-            );
-        }
-    };
+    let params: MakeAuthenticatedRequestParams =
+        match serde_json::from_value(request.params.clone()) {
+            Ok(params) => params,
+            Err(e) => {
+                return Response::error(
+                    request.id.clone(),
+                    INVALID_PARAMS,
+                    format!("invalid params: {e}"),
+                );
+            }
+        };
 
     let vault = match ctx.vault.lock() {
         Ok(vault) => vault,
@@ -338,7 +339,11 @@ mod tests {
         let result = response.result.expect("expected a result");
         assert_eq!(
             result["capabilities"],
-            serde_json::json!(["list_capabilities", "make_authenticated_request", "check_credential"])
+            serde_json::json!([
+                "list_capabilities",
+                "make_authenticated_request",
+                "check_credential"
+            ])
         );
         assert!(response.error.is_none());
     }
@@ -362,7 +367,10 @@ mod tests {
             "method": "GET",
             "path": "/",
         });
-        let response = handle(&request_with_params(3, "make_authenticated_request", params), &ctx);
+        let response = handle(
+            &request_with_params(3, "make_authenticated_request", params),
+            &ctx,
+        );
         let error = response.error.expect("expected an error");
         assert_eq!(error.code, ERR_PROVIDER_NOT_FOUND);
     }
@@ -371,7 +379,11 @@ mod tests {
     fn make_authenticated_request_with_invalid_params_is_rejected() {
         let (_dir, ctx) = test_context();
         let response = handle(
-            &request_with_params(4, "make_authenticated_request", serde_json::json!({"nope": true})),
+            &request_with_params(
+                4,
+                "make_authenticated_request",
+                serde_json::json!({"nope": true}),
+            ),
             &ctx,
         );
         let error = response.error.expect("expected an error");

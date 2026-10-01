@@ -24,7 +24,9 @@ pub enum CoreError {
     #[error("decryption failed: ciphertext is invalid or has been tampered with")]
     DecryptionFailed,
 
-    #[error("vault at {0} is partially initialized (corrupted or interrupted init) — remove it and re-run `envy init`")]
+    #[error(
+        "vault at {0} is partially initialized (corrupted or interrupted init) — remove it and re-run `envy init`"
+    )]
     PartialVault(PathBuf),
 
     #[error("no envy vault found at {0} — run `envy init` first")]
@@ -36,7 +38,9 @@ pub enum CoreError {
     #[error("a secret named '{0}' already exists in the vault")]
     SecretAlreadyExists(String),
 
-    #[error("bundled provider descriptor '{name}' failed to parse (this is a bug in envy itself): {message}")]
+    #[error(
+        "bundled provider descriptor '{name}' failed to parse (this is a bug in envy itself): {message}"
+    )]
     BundledProviderDescriptor { name: &'static str, message: String },
 
     #[error("no secret named '{0}' in the vault")]

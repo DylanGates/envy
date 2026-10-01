@@ -48,7 +48,8 @@ pub fn execute(
         ))
     })?;
 
-    let has_active_consent = vault.has_active_consent(&descriptor.id, "make_authenticated_request")?;
+    let has_active_consent =
+        vault.has_active_consent(&descriptor.id, "make_authenticated_request")?;
     let policy_request = PolicyRequest {
         operation: "make_authenticated_request",
         provider: Some(&descriptor.id),
@@ -440,7 +441,9 @@ domains = ["api.empty.com"]
         let keystore = crate::keychain::InMemoryKeyStore::new();
         let vault = crate::vault::init_with_keystore(dir.path(), &keystore).unwrap();
         let secret_value = "envy-live-test-token-do-not-leak";
-        vault.add_secret("HTTPBIN_KEY", secret_value.as_bytes()).unwrap();
+        vault
+            .add_secret("HTTPBIN_KEY", secret_value.as_bytes())
+            .unwrap();
         vault
             .grant_consent(
                 "httpbin",
@@ -473,10 +476,16 @@ auth_style = "bearer"
             query: vec![],
         };
 
-        let response =
-            execute(&vault, &registry, &req).expect("consent should have unblocked this non-GET call");
+        let response = execute(&vault, &registry, &req)
+            .expect("consent should have unblocked this non-GET call");
         assert_eq!(response.status, 200);
-        assert!(!response.body.contains(secret_value), "secret leaked into response body");
-        assert!(response.body.contains("[REDACTED]"), "expected the echoed header to be redacted");
+        assert!(
+            !response.body.contains(secret_value),
+            "secret leaked into response body"
+        );
+        assert!(
+            response.body.contains("[REDACTED]"),
+            "expected the echoed header to be redacted"
+        );
     }
 }

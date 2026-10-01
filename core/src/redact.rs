@@ -31,19 +31,28 @@ mod tests {
 
     #[test]
     fn no_match_is_unchanged() {
-        assert_eq!(redact_body(r#"{"ok":true}"#, "sk_live_abc"), r#"{"ok":true}"#);
+        assert_eq!(
+            redact_body(r#"{"ok":true}"#, "sk_live_abc"),
+            r#"{"ok":true}"#
+        );
     }
 
     #[test]
     fn redacts_a_single_occurrence() {
         let body = r#"{"token":"sk_live_abc"}"#;
-        assert_eq!(redact_body(body, "sk_live_abc"), r#"{"token":"[REDACTED]"}"#);
+        assert_eq!(
+            redact_body(body, "sk_live_abc"),
+            r#"{"token":"[REDACTED]"}"#
+        );
     }
 
     #[test]
     fn redacts_multiple_occurrences() {
         let body = "sk_live_abc and again sk_live_abc";
-        assert_eq!(redact_body(body, "sk_live_abc"), "[REDACTED] and again [REDACTED]");
+        assert_eq!(
+            redact_body(body, "sk_live_abc"),
+            "[REDACTED] and again [REDACTED]"
+        );
     }
 
     #[test]
