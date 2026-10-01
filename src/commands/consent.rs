@@ -4,13 +4,25 @@ use crate::cli::{ConsentAction, GlobalArgs};
 
 pub fn run(action: ConsentAction, global: &GlobalArgs) -> anyhow::Result<()> {
     match action {
-        ConsentAction::Grant { provider, operation, ttl } => grant(provider, operation, ttl, global),
-        ConsentAction::Revoke { provider, operation } => revoke(provider, operation, global),
+        ConsentAction::Grant {
+            provider,
+            operation,
+            ttl,
+        } => grant(provider, operation, ttl, global),
+        ConsentAction::Revoke {
+            provider,
+            operation,
+        } => revoke(provider, operation, global),
         ConsentAction::List => list(global),
     }
 }
 
-fn grant(provider: String, operation: String, ttl: String, global: &GlobalArgs) -> anyhow::Result<()> {
+fn grant(
+    provider: String,
+    operation: String,
+    ttl: String,
+    global: &GlobalArgs,
+) -> anyhow::Result<()> {
     let ttl_duration = envy_core::consent::parse_ttl(&ttl)?;
 
     let cwd = std::env::current_dir()?;
@@ -91,8 +103,11 @@ fn list(global: &GlobalArgs) -> anyhow::Result<()> {
             };
             println!(
                 "{}  {}  {}  granted={}  expires={}  ({status})",
-                grant.provider, grant.operation, grant.subject.as_deref().unwrap_or("-"),
-                grant.granted_at, grant.expires_at,
+                grant.provider,
+                grant.operation,
+                grant.subject.as_deref().unwrap_or("-"),
+                grant.granted_at,
+                grant.expires_at,
             );
         }
     }

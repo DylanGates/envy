@@ -5,7 +5,11 @@ use envy_core::audit::AuditEvent;
 
 use crate::cli::GlobalArgs;
 
-pub fn run(encrypted: Option<PathBuf>, env: Option<PathBuf>, global: &GlobalArgs) -> anyhow::Result<()> {
+pub fn run(
+    encrypted: Option<PathBuf>,
+    env: Option<PathBuf>,
+    global: &GlobalArgs,
+) -> anyhow::Result<()> {
     match (encrypted, env) {
         (Some(_), Some(_)) => bail!("pass either --encrypted or --env, not both"),
         (None, None) => bail!(
@@ -73,7 +77,6 @@ fn import_encrypted(path: &Path, global: &GlobalArgs) -> anyhow::Result<()> {
     }
     Ok(())
 }
-
 
 fn import_env(path: &Path, global: &GlobalArgs) -> anyhow::Result<()> {
     let text = std::fs::read_to_string(path)

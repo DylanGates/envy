@@ -38,8 +38,13 @@ fn backup_if_exists(path: &Path, force: bool) -> anyhow::Result<()> {
             );
         }
         let backup = PathBuf::from(format!("{}.bak", path.display()));
-        std::fs::copy(path, &backup)
-            .with_context(|| format!("failed to back up {} to {}", path.display(), backup.display()))?;
+        std::fs::copy(path, &backup).with_context(|| {
+            format!(
+                "failed to back up {} to {}",
+                path.display(),
+                backup.display()
+            )
+        })?;
     }
     Ok(())
 }
@@ -110,12 +115,12 @@ fn export_encrypted(path: &Path, force: bool, global: &GlobalArgs) -> anyhow::Re
     })?;
 
     if global.json {
-        println!(r#"{{"status":"ok","exported":{count},"path":"{}"}}"#, path.display());
-    } else if !global.quiet {
         println!(
-            "Exported {count} encrypted secret(s) to {}",
+            r#"{{"status":"ok","exported":{count},"path":"{}"}}"#,
             path.display()
         );
+    } else if !global.quiet {
+        println!("Exported {count} encrypted secret(s) to {}", path.display());
     }
     Ok(())
 }
@@ -256,7 +261,11 @@ fn export_example(path: &Path, force: bool, global: &GlobalArgs) -> anyhow::Resu
             secrets.len()
         );
     } else if !global.quiet {
-        println!("Wrote {} variable name(s) to {}", secrets.len(), path.display());
+        println!(
+            "Wrote {} variable name(s) to {}",
+            secrets.len(),
+            path.display()
+        );
     }
     Ok(())
 }

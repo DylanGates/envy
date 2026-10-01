@@ -12,7 +12,9 @@ pub fn run(global: &GlobalArgs) -> anyhow::Result<()> {
             .iter()
             .map(|step| match &step.outcome {
                 Ok(detail) => serde_json::json!({"step": step.name, "ok": true, "detail": detail}),
-                Err(message) => serde_json::json!({"step": step.name, "ok": false, "detail": message}),
+                Err(message) => {
+                    serde_json::json!({"step": step.name, "ok": false, "detail": message})
+                }
             })
             .collect();
         println!(

@@ -3,9 +3,18 @@ use crate::mcp_clients::{self, McpClient, Scope};
 
 pub fn run(action: ExposeAction, global: &GlobalArgs) -> anyhow::Result<()> {
     match action {
-        ExposeAction::Install { client, scope, mcp_entry, force } => {
-            install(client.into(), scope.map(Scope::from), mcp_entry, force, global)
-        }
+        ExposeAction::Install {
+            client,
+            scope,
+            mcp_entry,
+            force,
+        } => install(
+            client.into(),
+            scope.map(Scope::from),
+            mcp_entry,
+            force,
+            global,
+        ),
     }
 }
 
@@ -28,7 +37,11 @@ fn install(
             path.display()
         );
     } else if !global.quiet {
-        println!("Installed envy's MCP server for {} at {}", client.id(), path.display());
+        println!(
+            "Installed envy's MCP server for {} at {}",
+            client.id(),
+            path.display()
+        );
     }
     Ok(())
 }
