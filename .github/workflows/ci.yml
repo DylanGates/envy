@@ -26,8 +26,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libdbus-1-dev pkg-config
-
+          sudo apt-get install -y libdbus-1-dev pkg-config dbus-x11 gnome-keyring
       - name: Setup Node.js & pnpm
         uses: pnpm/action-setup@v4
         with:
@@ -47,7 +46,12 @@ jobs:
         run: cargo test --manifest-path core/Cargo.toml
 
       - name: Run CLI Integration Tests
-        run: cargo test
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            dbus-run-session -- cargo test
+          else
+            cargo test
+          fi
 
       - name: Build MCP Adapter
         working-directory: mcp
