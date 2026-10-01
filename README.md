@@ -18,8 +18,7 @@
 
 **envy** is an open-source, local-first secrets manager and credential gateway designed for developers and AI coding agents (Claude Code, Cursor, Codex, etc.).
 
-It discovers credentials across project files, identifies their service providers, stores secret values in an encrypted local vault protected by the OS keychain, and brokers capability requests so autonomous tools and AI agents can validate or use credentials without ever receiving raw secret plaintext.
-
+It lets developers and AI agents use credentials to access APIs, servers, and infrastructure without handing over the credentials themselves.
 ---
 
 ## Features
@@ -123,6 +122,17 @@ envy expose install claude-code
 |  - OS Keychain Key Storage                                  |
 +-------------------------------------------------------------+
 ```
+
+---
+
+## Roadmap
+
+- [x] **Phase 1:** Local Vault, SQLite encryption & OS Keychain foundation
+- [x] **Phase 2:** Multi-format candidate scanning & reversible source file remediation
+- [x] **Phase 3:** Universal credential testing, cataloged health checks & ad-hoc mode
+- [x] **Phase 4:** API & capability-oriented MCP credential gateway
+- [ ] **Phase 5:** **SSH & Infrastructure Gateway** (local SSH agent socket, host profiles, policy-gated remote execution)
+- [ ] **Phase 6:** Client-side encrypted cloud sync & team approvals
 
 ---
 

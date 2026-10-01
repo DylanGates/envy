@@ -1,6 +1,6 @@
 {
   "name": "envy-mcp",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "description": "Stateless, untrusted MCP adapter exposing envy's capability-oriented tools to AI agents.",
