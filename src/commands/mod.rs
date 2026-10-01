@@ -13,6 +13,7 @@ mod provider;
 mod run;
 mod scan;
 mod show;
+mod ssh;
 
 use anyhow::bail;
 
@@ -22,7 +23,11 @@ pub fn dispatch(cli: Cli) -> anyhow::Result<()> {
     let global = &cli.global;
     match cli.command {
         Commands::Init => init::run(global),
-        Commands::Scan { path } => scan::run(path, global),
+        Commands::Scan {
+            path,
+            remediate,
+            restore,
+        } => scan::run(path, remediate, restore, global),
         Commands::Add { name, from_env } => add::run(name, from_env, global),
         Commands::List => list::run(global),
         Commands::Show {
@@ -59,6 +64,7 @@ pub fn dispatch(cli: Cli) -> anyhow::Result<()> {
         Commands::Mcp { action } => mcp::run(action, global),
         Commands::Consent { action } => consent::run(action, global),
         Commands::Doctor => doctor::run(global),
+        Commands::Ssh { action } => ssh::run(action, global),
     }
 }
 

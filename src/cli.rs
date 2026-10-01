@@ -53,6 +53,14 @@ pub enum Commands {
     Scan {
         /// Directory to scan (defaults to the current directory).
         path: Option<PathBuf>,
+
+        /// Automatically replace discovered plaintext credentials with envy:// references in source files.
+        #[arg(long)]
+        remediate: bool,
+
+        /// Restore .bak backup files created during a previous remediation pass.
+        #[arg(long)]
+        restore: bool,
     },
 
     /// Import a specific candidate into the vault.
@@ -200,6 +208,53 @@ pub enum Commands {
     /// check. Uses a throwaway vault and keychain entry — never touches a
     /// real project's vault.
     Doctor,
+
+    /// Manage SSH keys, host profiles, and infrastructure access.
+    Ssh {
+        #[command(subcommand)]
+        action: SshAction,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum SshAction {
+    /// Import an SSH private key into the vault.
+    Import {
+        /// Path to the private key file on disk (e.g. ~/.ssh/id_ed25519).
+        path: PathBuf,
+
+        /// Name for the stored identity (defaults to the key filename).
+        #[arg(long)]
+        name: Option<String>,
+    },
+
+    /// List stored SSH key identities and fingerprints.
+    Keys,
+
+    /// Add or update a server/host profile.
+    Add {
+        /// Profile name (e.g. production, staging).
+        name: String,
+
+        /// Server hostname or IP address.
+        #[arg(long)]
+        host: String,
+
+        /// SSH port.
+        #[arg(long, default_value_t = 22)]
+        port: u16,
+
+        /// SSH username (e.g. deploy, root).
+        #[arg(long)]
+        user: String,
+
+        /// Name of the stored SSH key identity to use.
+        #[arg(long)]
+        identity: String,
+    },
+
+    /// List configured SSH host profiles.
+    List,
 }
 
 #[derive(Debug, Subcommand)]

@@ -5,12 +5,20 @@ use envy_core::provider::Registry;
 
 use crate::cli::GlobalArgs;
 
-pub fn run(path: Option<PathBuf>, global: &GlobalArgs) -> anyhow::Result<()> {
+pub fn run(
+    path: Option<PathBuf>,
+    remediate: bool,
+    restore: bool,
+    global: &GlobalArgs,
+) -> anyhow::Result<()> {
     let root = match path {
         Some(p) => p,
         None => std::env::current_dir()?,
     };
 
+    if restore {
+        return run_restore(&root, global);
+    }
     let cwd = std::env::current_dir()?;
     let vault = envy_core::vault::open(&cwd)?;
 
@@ -202,13 +210,34 @@ pub fn run(path: Option<PathBuf>, global: &GlobalArgs) -> anyhow::Result<()> {
             continue;
         }
         let candidate = findings[n - 1];
-        match candidate.import_into(&vault) {
-            Ok(()) => {
+
+        let res = if remediate {
+            candidate
+                .import_and_remediate(&vault)
+                .map(|bak| (true, bak))
+        } else {
+            candidate
+                .import_into(&vault)
+                .map(|()| (false, PathBuf::new()))
+        };
+
+        match res {
+            Ok((remediated, bak)) => {
                 if !global.quiet {
-                    println!(
-                        "  ✓  Imported '{}' (envy://{})",
-                        candidate.var_name, candidate.var_name
-                    );
+                    if remediated {
+                        println!(
+                            "  ✓  Imported & remediated '{}' (envy://{}) in {} (backup at {})",
+                            candidate.var_name,
+                            candidate.var_name,
+                            candidate.path.display(),
+                            bak.display()
+                        );
+                    } else {
+                        println!(
+                            "  ✓  Imported '{}' (envy://{})",
+                            candidate.var_name, candidate.var_name
+                        );
+                    }
                 }
                 imported += 1;
             }
@@ -222,13 +251,50 @@ pub fn run(path: Option<PathBuf>, global: &GlobalArgs) -> anyhow::Result<()> {
                 skipped += 1;
             }
             Err(e) => {
-                eprintln!("  ✗  Failed to import '{}': {e}", candidate.var_name);
+                eprintln!("  ✗  Failed to process '{}': {e}", candidate.var_name);
             }
         }
     }
-
     if !global.quiet {
         println!("\nImported {imported}, skipped {skipped}.");
+    }
+    Ok(())
+}
+fn run_restore(root: &std::path::Path, global: &GlobalArgs) -> anyhow::Result<()> {
+    let mut restored = 0usize;
+    visit_and_restore(root, &mut restored, global)?;
+
+    if global.json {
+        println!(r#"{{"status":"ok","restored":{restored}}}"#);
+    } else if !global.quiet {
+        println!("Restored {restored} backup file(s).");
+    }
+    Ok(())
+}
+
+fn visit_and_restore(
+    dir: &std::path::Path,
+    restored: &mut usize,
+    global: &GlobalArgs,
+) -> anyhow::Result<()> {
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                if name != ".git" && name != "target" && name != "node_modules" {
+                    let _ = visit_and_restore(&path, restored, global);
+                }
+            } else if path.extension().and_then(|e| e.to_str()) == Some("bak") {
+                let orig_path = path.with_extension("");
+                if let Ok(()) = envy_core::remediate::restore_backup(&orig_path) {
+                    *restored += 1;
+                    if !global.quiet {
+                        println!("Restored {} from {}", orig_path.display(), path.display());
+                    }
+                }
+            }
+        }
     }
     Ok(())
 }
