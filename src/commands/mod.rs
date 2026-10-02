@@ -4,6 +4,7 @@ mod consent;
 mod doctor;
 mod export;
 mod expose;
+mod hook;
 mod import;
 mod init;
 mod list;
@@ -67,6 +68,7 @@ pub fn dispatch(cli: Cli) -> anyhow::Result<()> {
         Commands::Doctor => doctor::run(global),
         Commands::Ssh { action } => ssh::run(action, global),
         Commands::Policy => policy::run(global),
+        Commands::Hook { action } => hook::run(action, global),
     }
 }
 

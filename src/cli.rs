@@ -217,6 +217,18 @@ pub enum Commands {
 
     /// Inspect and validate active project governance and agent policies.
     Policy,
+
+    /// Install or manage Git pre-commit hooks to block plaintext credential leaks.
+    Hook {
+        #[command(subcommand)]
+        action: HookAction,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum HookAction {
+    /// Install an envy pre-commit hook in .git/hooks/pre-commit.
+    Install,
 }
 
 #[derive(Debug, Subcommand)]
