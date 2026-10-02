@@ -56,6 +56,7 @@ pub fn execute(
         domain: descriptor.domains.first().map(String::as_str),
         agent_identity: None,
         method: req.method,
+        command: None,
         has_active_consent,
     };
     match policy::evaluate(&policy_request) {

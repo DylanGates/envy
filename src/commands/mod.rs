@@ -9,6 +9,7 @@ mod init;
 mod list;
 mod log;
 mod mcp;
+mod policy;
 mod provider;
 mod run;
 mod scan;
@@ -65,6 +66,7 @@ pub fn dispatch(cli: Cli) -> anyhow::Result<()> {
         Commands::Consent { action } => consent::run(action, global),
         Commands::Doctor => doctor::run(global),
         Commands::Ssh { action } => ssh::run(action, global),
+        Commands::Policy => policy::run(global),
     }
 }
 

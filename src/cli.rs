@@ -214,6 +214,9 @@ pub enum Commands {
         #[command(subcommand)]
         action: SshAction,
     },
+
+    /// Inspect and validate active project governance and agent policies.
+    Policy,
 }
 
 #[derive(Debug, Subcommand)]
