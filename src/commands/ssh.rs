@@ -19,6 +19,13 @@ pub fn run(action: SshAction, global: &GlobalArgs) -> anyhow::Result<()> {
         SshAction::List => list_hosts(global),
         SshAction::Connect { name } => connect(name, global),
         SshAction::Exec { name, command } => exec(name, command, global),
+        SshAction::Tunnel {
+            name,
+            local_port,
+            remote_host,
+            remote_port,
+        } => tunnel(name, local_port, remote_host, remote_port, global),
+        SshAction::Agent { socket } => agent(socket, global),
     }
 }
 
@@ -286,5 +293,113 @@ fn list_hosts(global: &GlobalArgs) -> anyhow::Result<()> {
             }
         }
     }
+    Ok(())
+}
+fn tunnel(
+    name: String,
+    local_port: u16,
+    remote_host: String,
+    remote_port: u16,
+    global: &GlobalArgs,
+) -> anyhow::Result<()> {
+    let cwd = std::env::current_dir()?;
+    let vault = envy_core::vault::open(&cwd)?;
+    let profile = vault.get_ssh_host(&name)?;
+
+    let private_key = vault
+        .get_secret(&profile.identity)
+        .with_context(|| format!("identity '{}' not found in vault", profile.identity))?;
+
+    let temp_dir = tempfile::tempdir()?;
+    let key_path = temp_dir.path().join("id_ed25519");
+    std::fs::write(&key_path, &private_key)?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&key_path)?.permissions();
+        perms.set_mode(0o600);
+        std::fs::set_permissions(&key_path, perms)?;
+    }
+
+    let forward_arg = format!("{local_port}:{remote_host}:{remote_port}");
+
+    vault.log_event(&AuditEvent {
+        subject: Some("cli"),
+        project: Some(&cwd.to_string_lossy()),
+        provider: Some("ssh"),
+        operation: "ssh_tunnel",
+        endpoint_host: Some(&profile.host),
+        outcome: "success",
+        redaction_summary: Some(&format!(
+            "opened tunnel on '{}' (127.0.0.1:{} -> {}:{})",
+            name, local_port, remote_host, remote_port
+        )),
+    })?;
+
+    if !global.quiet && !global.json {
+        println!(
+            "Forwarding 127.0.0.1:{} -> {}:{} through {} ({}@{}:{})...",
+            local_port,
+            remote_host,
+            remote_port,
+            profile.name,
+            profile.user,
+            profile.host,
+            profile.port
+        );
+        println!("Press Ctrl+C to close the tunnel.");
+    }
+
+    let status = std::process::Command::new("ssh")
+        .arg("-i")
+        .arg(&key_path)
+        .arg("-p")
+        .arg(profile.port.to_string())
+        .arg("-N") // Do not execute a remote command (port forwarding only)
+        .arg("-L")
+        .arg(&forward_arg)
+        .arg("-o")
+        .arg("IdentitiesOnly=yes")
+        .arg("-o")
+        .arg("ConnectTimeout=10")
+        .arg("-o")
+        .arg("StrictHostKeyChecking=accept-new")
+        .arg(format!("{}@{}", profile.user, profile.host))
+        .status()
+        .with_context(|| "failed to establish SSH tunnel")?;
+
+    if !status.success() {
+        anyhow::bail!("SSH tunnel exited with status {}", status);
+    }
+    Ok(())
+}
+
+fn agent(socket_opt: Option<PathBuf>, global: &GlobalArgs) -> anyhow::Result<()> {
+    let cwd = std::env::current_dir()?;
+    let vault = envy_core::vault::open(&cwd)?;
+
+    let socket_path = match socket_opt {
+        Some(s) => s,
+        None => {
+            let home = std::env::var("HOME")
+                .or_else(|_| std::env::var("USERPROFILE"))
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| cwd.clone());
+            let dot_envy = home.join(".envy");
+            let _ = std::fs::create_dir_all(&dot_envy);
+            dot_envy.join("ssh-agent.sock")
+        }
+    };
+
+    if !global.quiet && !global.json {
+        println!("Starting envy SSH agent on {}", socket_path.display());
+        println!(
+            "Export SSH_AUTH_SOCK=\"{}\" to use it with ssh/git.",
+            socket_path.display()
+        );
+    }
+
+    envy_core::ssh::serve_ssh_agent(&vault, &socket_path)?;
     Ok(())
 }

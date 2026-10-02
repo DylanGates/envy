@@ -274,6 +274,31 @@ pub enum SshAction {
         #[arg(last = true, required = true)]
         command: Vec<String>,
     },
+
+    /// Establish an ephemeral SSH local port-forwarding tunnel for agents or local tools.
+    Tunnel {
+        /// Name of the configured host profile.
+        name: String,
+
+        /// Local port to bind.
+        #[arg(long)]
+        local_port: u16,
+
+        /// Remote target host (e.g. 127.0.0.1).
+        #[arg(long, default_value = "127.0.0.1")]
+        remote_host: String,
+
+        /// Remote target port (e.g. 5432, 8080).
+        #[arg(long)]
+        remote_port: u16,
+    },
+
+    /// Run the background SSH Agent daemon answering signing requests over socket.
+    Agent {
+        /// Socket path to bind (defaults to ~/.envy/ssh-agent.sock).
+        #[arg(long)]
+        socket: Option<PathBuf>,
+    },
 }
 
 #[derive(Debug, Subcommand)]

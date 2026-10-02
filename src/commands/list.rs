@@ -12,12 +12,21 @@ pub fn run(global: &GlobalArgs) -> anyhow::Result<()> {
             println!("No secrets in vault.");
         }
         for secret in &secrets {
+            let stale_tag = if secret.is_stale {
+                format!(
+                    " \x1b[33m[STALE: {}d old - rotation recommended]\x1b[0m",
+                    secret.age_days
+                )
+            } else {
+                format!(" ({}d old)", secret.age_days)
+            };
             println!(
-                "{}  provider={}  kind={}  risk={}",
+                "{:<24} provider={:<12} kind={:<12} risk={:<6}{}",
                 secret.name,
                 secret.provider.as_deref().unwrap_or("-"),
                 secret.credential_kind.as_deref().unwrap_or("-"),
                 secret.risk.as_deref().unwrap_or("-"),
+                stale_tag
             );
         }
     }

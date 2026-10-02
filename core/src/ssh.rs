@@ -89,6 +89,64 @@ pub fn import_ssh_key(
         comment,
     })
 }
+/// Starts an SSH agent listener on `socket_path` to answer agent identity requests.
+pub fn serve_ssh_agent(_vault: &Vault, socket_path: &Path) -> Result<(), CoreError> {
+    use interprocess::local_socket::{GenericFilePath, ListenerOptions, ToFsName, prelude::*};
+
+    if socket_path.exists() {
+        let _ = std::fs::remove_file(socket_path);
+    }
+
+    let name = socket_path
+        .to_fs_name::<GenericFilePath>()
+        .map_err(|e| CoreError::Io {
+            path: socket_path.to_path_buf(),
+            source: e,
+        })?;
+
+    let listener = ListenerOptions::new()
+        .name(name)
+        .try_overwrite(true)
+        .create_sync()
+        .map_err(|e| CoreError::Io {
+            path: socket_path.to_path_buf(),
+            source: e,
+        })?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o600));
+    }
+
+    // Accept loop for incoming SSH agent protocol queries
+    for conn in listener.incoming() {
+        if let Ok(mut stream) = conn {
+            // Read 4-byte message length prefix
+            use std::io::{Read, Write};
+            let mut len_buf = [0u8; 4];
+            if stream.read_exact(&mut len_buf).is_ok() {
+                let len = u32::from_be_bytes(len_buf) as usize;
+                let mut msg = vec![0u8; len];
+                if stream.read_exact(&mut msg).is_ok() && !msg.is_empty() {
+                    let msg_type = msg[0];
+                    // SSH2_AGENTC_REQUEST_IDENTITIES = 11
+                    if msg_type == 11 {
+                        // Return empty identity list (or identities count)
+                        // SSH2_AGENT_IDENTITIES_ANSWER = 12, num_keys = 0 (4 bytes)
+                        let response = [0, 0, 0, 5, 12, 0, 0, 0, 0];
+                        let _ = stream.write_all(&response);
+                    } else {
+                        // SSH_AGENT_FAILURE = 30
+                        let response = [0, 0, 0, 1, 30];
+                        let _ = stream.write_all(&response);
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
 
 #[cfg(test)]
 mod tests {

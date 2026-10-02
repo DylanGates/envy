@@ -58,7 +58,7 @@ struct VaultConfig {
 /// A secret's metadata, deliberately excluding `ciphertext`/`nonce`/
 /// `fingerprint` — this is what `list`/`show` operate on; nothing that
 /// can decrypt a value ever appears here.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SecretMetadata {
     pub id: String,
     pub name: String,
@@ -67,6 +67,10 @@ pub struct SecretMetadata {
     pub risk: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    /// Calculated age in days since creation or last update.
+    pub age_days: i64,
+    /// Flagged if age exceeds 90 days.
+    pub is_stale: bool,
 }
 
 /// A time-boxed consent grant for a `(provider, operation)` pair — see
@@ -145,10 +149,12 @@ impl Vault {
     /// Lists metadata for every secret in the vault, sorted by name.
     pub fn list_secrets(&self) -> Result<Vec<SecretMetadata>, CoreError> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, name, provider, credential_kind, risk, created_at, updated_at
-             FROM secrets ORDER BY name",
+            "SELECT id, name, provider, credential_kind, risk, created_at, updated_at,
+                    CAST((julianday(CURRENT_TIMESTAMP) - julianday(created_at)) AS INTEGER) AS age_days
+             FROM secrets ORDER BY name ASC",
         )?;
         let rows = stmt.query_map([], |row| {
+            let age_days: i64 = row.get(7).unwrap_or(0);
             Ok(SecretMetadata {
                 id: row.get(0)?,
                 name: row.get(1)?,
@@ -157,6 +163,8 @@ impl Vault {
                 risk: row.get(4)?,
                 created_at: row.get(5)?,
                 updated_at: row.get(6)?,
+                age_days,
+                is_stale: age_days >= 90,
             })
         })?;
         rows.collect::<Result<Vec<_>, _>>().map_err(CoreError::from)
@@ -168,10 +176,12 @@ impl Vault {
 
         self.conn
             .query_row(
-                "SELECT id, name, provider, credential_kind, risk, created_at, updated_at
+                "SELECT id, name, provider, credential_kind, risk, created_at, updated_at,
+                        CAST((julianday(CURRENT_TIMESTAMP) - julianday(created_at)) AS INTEGER) AS age_days
                  FROM secrets WHERE id = ?1",
                 rusqlite::params![name],
                 |row| {
+                    let age_days: i64 = row.get(7).unwrap_or(0);
                     Ok(SecretMetadata {
                         id: row.get(0)?,
                         name: row.get(1)?,
@@ -180,6 +190,8 @@ impl Vault {
                         risk: row.get(4)?,
                         created_at: row.get(5)?,
                         updated_at: row.get(6)?,
+                        age_days,
+                        is_stale: age_days >= 90,
                     })
                 },
             )
