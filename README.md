@@ -37,9 +37,10 @@ It lets developers and AI agents use credentials to access APIs, servers, and in
 
 ### Quick Install (macOS / Linux / WSL)
 ```bash
-curl -fsSL https://raw.githubusercontent.com/DylanGates/envy/master/install.sh | bash
+curl -fsSL https://tinyurl.com/envy-sh | bash
 ```
 
+*(Or direct GitHub link: `curl -fsSL https://raw.githubusercontent.com/DylanGates/envy/master/install.sh | bash`)*
 ---
 
 ## Build from Source
