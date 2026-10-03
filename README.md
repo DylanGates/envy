@@ -33,13 +33,20 @@ It lets developers and AI agents use credentials to access APIs, servers, and in
 
 ---
 
-## Installation & Build
+## Installation
+
+### Quick Install (macOS / Linux / WSL)
+```bash
+curl -fsSL https://raw.githubusercontent.com/DylanGates/envy/master/install.sh | bash
+```
+
+---
+
+## Build from Source
 
 ### Prerequisites
 - **Rust:** 1.80+ (`cargo`)
 - **Node.js & pnpm:** Node 20+, `pnpm` 9+
-
-### Build from Source
 ```bash
 # Clone the repository
 git clone https://github.com/DylanGates/envy.git
