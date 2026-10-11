@@ -77,6 +77,21 @@ pub enum Commands {
         rotate_after_days: Option<i64>,
     },
 
+    /// Run an application in a zero-exposure sandbox for AI coding agents.
+    ///
+    /// Automatically ensures project files are safe from leaks (remediating plaintext
+    /// into envy:// references), validates commands against policy (blocking .env accesses),
+    /// injects credentials solely into subprocess memory, and records redacted audit streams.
+    Sandbox {
+        /// Auto-remediate plaintext credentials in project files before running.
+        #[arg(long, default_value_t = true)]
+        remediate: bool,
+
+        /// Command and arguments to execute in the sandbox.
+        #[arg(last = true, required = true)]
+        command: Vec<String>,
+    },
+
     /// List secrets currently held in the vault.
     List,
 
