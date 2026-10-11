@@ -87,7 +87,14 @@ fn test_cli_ssh_key_import_and_host_profile() {
 
     // 7. Generate a new SSH keypair directly inside envy vault
     let gen_key = Command::new(envy_bin)
-        .args(["ssh", "generate", "staging-key", "--algorithm", "ed25519", "--json"])
+        .args([
+            "ssh",
+            "generate",
+            "staging-key",
+            "--algorithm",
+            "ed25519",
+            "--json",
+        ])
         .current_dir(project_dir)
         .output()
         .expect("ssh generate failed");
