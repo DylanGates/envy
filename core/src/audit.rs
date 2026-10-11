@@ -71,6 +71,17 @@ impl Vault {
         })?;
         rows.collect::<Result<Vec<_>, _>>().map_err(CoreError::from)
     }
+
+    /// Counts the number of audit events recorded for `subject` within the last hour.
+    pub fn count_recent_events_for_subject(&self, subject: &str) -> Result<i64, CoreError> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM audit_events \
+             WHERE subject = ?1 AND timestamp >= datetime(CURRENT_TIMESTAMP, '-1 hour')",
+            rusqlite::params![subject],
+            |row| row.get(0),
+        )?;
+        Ok(count)
+    }
 }
 
 #[cfg(test)]

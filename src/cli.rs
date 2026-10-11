@@ -71,6 +71,25 @@ pub enum Commands {
         /// Read the secret value directly from an environment variable of the same name.
         #[arg(long = "from-env")]
         from_env: bool,
+
+        /// Custom rotation interval in days (reminder interval before secret is flagged stale).
+        #[arg(long = "rotate-after-days")]
+        rotate_after_days: Option<i64>,
+    },
+
+    /// Run an application in a zero-exposure sandbox for AI coding agents.
+    ///
+    /// Automatically ensures project files are safe from leaks (remediating plaintext
+    /// into envy:// references), validates commands against policy (blocking .env accesses),
+    /// injects credentials solely into subprocess memory, and records redacted audit streams.
+    Sandbox {
+        /// Auto-remediate plaintext credentials in project files before running.
+        #[arg(long, default_value_t = true)]
+        remediate: bool,
+
+        /// Command and arguments to execute in the sandbox.
+        #[arg(last = true, required = true)]
+        command: Vec<String>,
     },
 
     /// List secrets currently held in the vault.
@@ -241,6 +260,30 @@ pub enum SshAction {
         /// Name for the stored identity (defaults to the key filename).
         #[arg(long)]
         name: Option<String>,
+    },
+
+    /// Generate a new SSH keypair directly inside the encrypted vault.
+    Generate {
+        /// Name of the key identity to create in the vault.
+        name: String,
+
+        /// Key algorithm (ed25519 or rsa).
+        #[arg(long, default_value = "ed25519")]
+        algorithm: String,
+
+        /// Optional comment to attach to the public key.
+        #[arg(long)]
+        comment: Option<String>,
+    },
+
+    /// Export the OpenSSH public key for a stored identity.
+    Export {
+        /// Name of the key identity in the vault.
+        name: String,
+
+        /// Optional file path to write the public key to (prints to stdout if omitted).
+        #[arg(long)]
+        out: Option<PathBuf>,
     },
 
     /// List stored SSH key identities and fingerprints.

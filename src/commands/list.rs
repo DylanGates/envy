@@ -12,13 +12,17 @@ pub fn run(global: &GlobalArgs) -> anyhow::Result<()> {
             println!("No secrets in vault.");
         }
         for secret in &secrets {
+            let interval_str = match secret.rotate_after_days {
+                Some(days) => format!("{days}d interval"),
+                None => "90d default".to_string(),
+            };
             let stale_tag = if secret.is_stale {
                 format!(
-                    " \x1b[33m[STALE: {}d old - rotation recommended]\x1b[0m",
-                    secret.age_days
+                    " \x1b[33m[STALE: {}d old (limit: {}) - rotation recommended]\x1b[0m",
+                    secret.age_days, interval_str
                 )
             } else {
-                format!(" ({}d old)", secret.age_days)
+                format!(" ({}d old, {})", secret.age_days, interval_str)
             };
             println!(
                 "{:<24} provider={:<12} kind={:<12} risk={:<6}{}",

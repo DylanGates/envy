@@ -46,6 +46,14 @@ fn default_true() -> bool {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentQuotas {
+    /// Maximum allowed capability requests per hour (default: unlimited).
+    pub max_requests_per_hour: Option<i64>,
+    /// Maximum outbound payload or response size in bytes.
+    pub max_payload_bytes: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentPolicy {
     #[serde(default)]
     pub allowed_providers: Vec<String>,
@@ -53,6 +61,8 @@ pub struct AgentPolicy {
     pub allow_read_only: bool,
     #[serde(default)]
     pub allow_write_with_consent: bool,
+    #[serde(default)]
+    pub quotas: Option<AgentQuotas>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -73,6 +83,10 @@ pub struct PolicyRequest<'a> {
     pub command: Option<&'a str>,
     /// Whether the caller already holds an active `envy consent grant`.
     pub has_active_consent: bool,
+    /// Recent request count in the last hour for quota evaluation.
+    pub recent_request_count: Option<i64>,
+    /// Outbound payload size in bytes for quota evaluation.
+    pub payload_bytes: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -143,6 +157,32 @@ pub fn evaluate_with_policy(request: &PolicyRequest, policy: &ProjectPolicy) -> 
                     };
                 }
             }
+
+            // Check quotas (rate limits & payload size)
+            if let Some(quotas) = &agent_policy.quotas {
+                if let (Some(max_reqs), Some(recent)) =
+                    (quotas.max_requests_per_hour, request.recent_request_count)
+                {
+                    if recent >= max_reqs {
+                        return PolicyDecision::Deny {
+                            reason: format!(
+                                "agent '{agent_id}' has exceeded its rate limit quota ({recent}/{max_reqs} requests this hour)"
+                            ),
+                        };
+                    }
+                }
+                if let (Some(max_bytes), Some(payload_len)) =
+                    (quotas.max_payload_bytes, request.payload_bytes)
+                {
+                    if payload_len > max_bytes {
+                        return PolicyDecision::Deny {
+                            reason: format!(
+                                "agent '{agent_id}' request payload exceeds quota limit ({payload_len} > {max_bytes} bytes)"
+                            ),
+                        };
+                    }
+                }
+            }
         } else if policy.default.access == "deny" && !policy.agents.is_empty() {
             return PolicyDecision::Deny {
                 reason: format!("unrecognized agent '{agent_id}' is denied by default policy"),
@@ -152,6 +192,17 @@ pub fn evaluate_with_policy(request: &PolicyRequest, policy: &ProjectPolicy) -> 
 
     // 2. Command whitelist checks (for SSH exec)
     if let Some(cmd) = request.command {
+        let cmd_trim = cmd.trim();
+
+        // Block any command that references .env (e.g. grep, cat, head, tail, etc.)
+        if is_env_file_involved(cmd_trim) {
+            return PolicyDecision::Deny {
+                reason: format!(
+                    "execution blocked: command references .env file ('{cmd_trim}'). Agents are prohibited from viewing raw env secrets."
+                ),
+            };
+        }
+
         if let Some(target) = request.domain.or(request.provider) {
             if let Some(host_policy) = policy.hosts.get(target) {
                 if !host_policy.allowed_commands.is_empty() {
@@ -197,6 +248,47 @@ pub fn evaluate_with_policy(request: &PolicyRequest, policy: &ProjectPolicy) -> 
     }
 }
 
+/// Checks if a command references `.env` files (e.g. `.env`, `.env.local`, `path/.env`, etc.)
+pub fn is_env_file_involved(command: &str) -> bool {
+    // Look for occurrences of .env
+    for token in command.split_whitespace() {
+        let clean =
+            token.trim_matches(|c: char| c == '"' || c == '\'' || c == ';' || c == '|' || c == '&');
+        if clean == ".env"
+            || clean.starts_with(".env.")
+            || clean.ends_with("/.env")
+            || clean.contains("/.env.")
+            || clean.contains("/.env")
+        {
+            return true;
+        }
+    }
+    // Also catch command-line args like --env-file=.env or <.env or >.env
+    if command.contains(".env") {
+        let lower = command.to_lowercase();
+        for part in lower.split(|c: char| {
+            c.is_whitespace()
+                || c == '='
+                || c == '<'
+                || c == '>'
+                || c == ';'
+                || c == '|'
+                || c == '&'
+                || c == '"'
+                || c == '\''
+        }) {
+            if part == ".env"
+                || part.starts_with(".env.")
+                || part.ends_with("/.env")
+                || part.contains("/.env.")
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 /// Compatibility wrapper for evaluating requests without explicit policy file.
 pub fn evaluate(request: &PolicyRequest) -> PolicyDecision {
     evaluate_with_policy(request, &ProjectPolicy::default())
@@ -216,6 +308,8 @@ mod tests {
             method: "LOCAL",
             command: None,
             has_active_consent: false,
+            recent_request_count: None,
+            payload_bytes: None,
         };
         assert_eq!(evaluate(&req), PolicyDecision::Allow);
     }
@@ -230,6 +324,8 @@ mod tests {
             method: "GET",
             command: None,
             has_active_consent: false,
+            recent_request_count: None,
+            payload_bytes: None,
         };
         assert_eq!(evaluate(&req), PolicyDecision::Allow);
     }
@@ -244,6 +340,8 @@ mod tests {
             method: "POST",
             command: None,
             has_active_consent: false,
+            recent_request_count: None,
+            payload_bytes: None,
         };
         assert!(matches!(
             evaluate(&req),
@@ -260,6 +358,7 @@ mod tests {
                 allowed_providers: vec!["context7".to_string()],
                 allow_read_only: true,
                 allow_write_with_consent: true,
+                quotas: None,
             },
         );
 
@@ -271,6 +370,8 @@ mod tests {
             method: "GET",
             command: None,
             has_active_consent: false,
+            recent_request_count: None,
+            payload_bytes: None,
         };
         assert!(matches!(
             evaluate_with_policy(&req, &policy),
@@ -297,6 +398,8 @@ mod tests {
             method: "EXEC",
             command: Some("rm -rf /"),
             has_active_consent: false,
+            recent_request_count: None,
+            payload_bytes: None,
         };
         assert!(matches!(
             evaluate_with_policy(&req, &policy),
@@ -311,10 +414,91 @@ mod tests {
             method: "EXEC",
             command: Some("uptime"),
             has_active_consent: false,
+            recent_request_count: None,
+            payload_bytes: None,
         };
         assert_eq!(
             evaluate_with_policy(&approved_req, &policy),
             PolicyDecision::Allow
+        );
+    }
+
+    #[test]
+    fn is_env_file_involved_detects_env_access() {
+        assert!(is_env_file_involved("cat .env"));
+        assert!(is_env_file_involved("grep SECRET .env"));
+        assert!(is_env_file_involved("grep -i key .env.production"));
+        assert!(is_env_file_involved("head -n 10 ./config/.env"));
+        assert!(is_env_file_involved("python script.py --env-file=.env"));
+        assert!(!is_env_file_involved("ls -la"));
+        assert!(!is_env_file_involved("echo environment"));
+        assert!(!is_env_file_involved("uptime"));
+    }
+
+    #[test]
+    fn command_referencing_env_is_blocked_by_policy() {
+        let policy = ProjectPolicy::default();
+        let req = PolicyRequest {
+            operation: "ssh_exec",
+            provider: Some("production"),
+            domain: Some("production"),
+            agent_identity: Some("claude_code"),
+            method: "EXEC",
+            command: Some("cat .env"),
+            has_active_consent: false,
+            recent_request_count: None,
+            payload_bytes: None,
+        };
+        let decision = evaluate_with_policy(&req, &policy);
+        assert!(matches!(decision, PolicyDecision::Deny { reason } if reason.contains(".env")));
+    }
+
+    #[test]
+    fn agent_quota_rate_limit_blocks_excessive_requests() {
+        let mut policy = ProjectPolicy::default();
+        policy.agents.insert(
+            "ci_agent".to_string(),
+            AgentPolicy {
+                allowed_providers: vec![],
+                allow_read_only: true,
+                allow_write_with_consent: true,
+                quotas: Some(AgentQuotas {
+                    max_requests_per_hour: Some(10),
+                    max_payload_bytes: Some(1024),
+                }),
+            },
+        );
+
+        let req = PolicyRequest {
+            operation: "check_credential",
+            provider: Some("stripe"),
+            domain: Some("api.stripe.com"),
+            agent_identity: Some("ci_agent"),
+            method: "GET",
+            command: None,
+            has_active_consent: false,
+            recent_request_count: Some(10), // at limit
+            payload_bytes: Some(100),
+        };
+        let decision = evaluate_with_policy(&req, &policy);
+        assert!(
+            matches!(decision, PolicyDecision::Deny { reason } if reason.contains("rate limit quota"))
+        );
+
+        let payload_req = PolicyRequest {
+            operation: "check_credential",
+            provider: Some("stripe"),
+            domain: Some("api.stripe.com"),
+            agent_identity: Some("ci_agent"),
+            method: "GET",
+            command: None,
+            has_active_consent: false,
+            recent_request_count: Some(5),
+            payload_bytes: Some(2048), // exceeds 1024
+        };
+        let payload_decision = evaluate_with_policy(&payload_req, &policy);
+        assert!(
+            matches!(payload_decision, PolicyDecision::Deny { reason } if reason.contains("payload exceeds quota"))
         );
     }
 }

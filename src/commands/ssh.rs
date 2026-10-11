@@ -8,6 +8,12 @@ use crate::cli::{GlobalArgs, SshAction};
 pub fn run(action: SshAction, global: &GlobalArgs) -> anyhow::Result<()> {
     match action {
         SshAction::Import { path, name } => import(path, name, global),
+        SshAction::Generate {
+            name,
+            algorithm,
+            comment,
+        } => generate(name, algorithm, comment, global),
+        SshAction::Export { name, out } => export_public(name, out, global),
         SshAction::Keys => keys(global),
         SshAction::Add {
             name,
@@ -62,6 +68,72 @@ fn import(path: PathBuf, name_opt: Option<String>, global: &GlobalArgs) -> anyho
             "Imported SSH key '{}' ({}) with fingerprint {}",
             info.name, info.key_type, info.fingerprint
         );
+    }
+    Ok(())
+}
+
+fn generate(
+    name: String,
+    algorithm: String,
+    comment: Option<String>,
+    global: &GlobalArgs,
+) -> anyhow::Result<()> {
+    let cwd = std::env::current_dir()?;
+    let vault = envy_core::vault::open(&cwd)?;
+
+    let (info, public_key) =
+        envy_core::ssh::generate_ssh_key(&vault, &name, &algorithm, comment.as_deref())?;
+
+    vault.log_event(&AuditEvent {
+        subject: Some("cli"),
+        project: Some(&cwd.to_string_lossy()),
+        provider: Some("ssh"),
+        operation: "ssh_generate_key",
+        endpoint_host: None,
+        outcome: "success",
+        redaction_summary: Some(&format!("generated SSH key '{}' ({})", name, info.key_type)),
+    })?;
+
+    if global.json {
+        println!(
+            "{}",
+            serde_json::json!({
+                "name": info.name,
+                "key_type": info.key_type,
+                "fingerprint": info.fingerprint,
+                "public_key": public_key,
+            })
+        );
+    } else if !global.quiet {
+        println!("Generated new SSH keypair for identity '{}':", info.name);
+        println!("  Type:        {}", info.key_type);
+        println!("  Fingerprint: {}", info.fingerprint);
+        println!("  Public Key:  {}", public_key);
+    }
+    Ok(())
+}
+
+fn export_public(name: String, out: Option<PathBuf>, global: &GlobalArgs) -> anyhow::Result<()> {
+    let cwd = std::env::current_dir()?;
+    let vault = envy_core::vault::open(&cwd)?;
+
+    let public_key = envy_core::ssh::export_ssh_public_key(&vault, &name)?;
+
+    if let Some(path) = out {
+        std::fs::write(&path, format!("{public_key}\n"))?;
+        if !global.quiet {
+            println!("Exported public key for '{name}' to {}", path.display());
+        }
+    } else if global.json {
+        println!(
+            "{}",
+            serde_json::json!({
+                "name": name,
+                "public_key": public_key
+            })
+        );
+    } else {
+        println!("{public_key}");
     }
     Ok(())
 }
@@ -136,13 +208,33 @@ fn add_host(
         redaction_summary: Some(&format!("configured host profile '{}'", name)),
     })?;
 
+    let is_agent = std::env::var("ENVY_AGENT_ID").is_ok();
     if global.json {
-        println!("{}", serde_json::to_string(&profile)?);
+        if is_agent {
+            let redacted_profile = serde_json::json!({
+                "name": profile.name,
+                "host": "[REDACTED]",
+                "port": profile.port,
+                "user": "[REDACTED]",
+                "identity": profile.identity,
+                "known_host_required": profile.known_host_required
+            });
+            println!("{}", serde_json::to_string(&redacted_profile)?);
+        } else {
+            println!("{}", serde_json::to_string(&profile)?);
+        }
     } else if !global.quiet {
-        println!(
-            "Added host profile '{}' ({}@{}:{})",
-            profile.name, profile.user, profile.host, profile.port
-        );
+        if is_agent {
+            println!(
+                "Added host profile '{}' ([REDACTED]@[REDACTED]:{})",
+                profile.name, profile.port
+            );
+        } else {
+            println!(
+                "Added host profile '{}' ({}@{}:{})",
+                profile.name, profile.user, profile.host, profile.port
+            );
+        }
     }
     Ok(())
 }
@@ -204,6 +296,32 @@ fn connect(name: String, global: &GlobalArgs) -> anyhow::Result<()> {
 
 fn exec(name: String, command: Vec<String>, global: &GlobalArgs) -> anyhow::Result<()> {
     let cwd = std::env::current_dir()?;
+    let cmd_str = command.join(" ");
+
+    // Evaluate policy on the command before loading keys or profile
+    let policy = envy_core::policy::load_policy(&cwd)?;
+    let agent_id = std::env::var("ENVY_AGENT_ID").ok();
+    let policy_req = envy_core::policy::PolicyRequest {
+        operation: "ssh_exec",
+        provider: Some(&name),
+        domain: Some(&name),
+        agent_identity: agent_id.as_deref(),
+        method: "EXEC",
+        command: Some(&cmd_str),
+        has_active_consent: false,
+        recent_request_count: None,
+        payload_bytes: Some(cmd_str.len()),
+    };
+    match envy_core::policy::evaluate_with_policy(&policy_req, &policy) {
+        envy_core::policy::PolicyDecision::Allow => {}
+        envy_core::policy::PolicyDecision::RequireConsent { reason } => {
+            anyhow::bail!("policy requires human consent: {reason}");
+        }
+        envy_core::policy::PolicyDecision::Deny { reason } => {
+            anyhow::bail!("policy denied command execution: {reason}");
+        }
+    }
+
     let vault = envy_core::vault::open(&cwd)?;
     let profile = vault.get_ssh_host(&name)?;
 
@@ -222,7 +340,6 @@ fn exec(name: String, command: Vec<String>, global: &GlobalArgs) -> anyhow::Resu
         perms.set_mode(0o600);
         std::fs::set_permissions(&key_path, perms)?;
     }
-    let cmd_str = command.join(" ");
 
     vault.log_event(&AuditEvent {
         subject: Some("cli"),
@@ -279,17 +396,42 @@ fn list_hosts(global: &GlobalArgs) -> anyhow::Result<()> {
     let vault = envy_core::vault::open(&cwd)?;
     let hosts = vault.list_ssh_hosts()?;
 
+    let is_agent = std::env::var("ENVY_AGENT_ID").is_ok();
     if global.json {
-        println!("{}", serde_json::to_string(&hosts)?);
+        if is_agent {
+            let redacted_hosts: Vec<serde_json::Value> = hosts
+                .iter()
+                .map(|h| {
+                    serde_json::json!({
+                        "name": h.name,
+                        "host": "[REDACTED]",
+                        "port": h.port,
+                        "user": "[REDACTED]",
+                        "identity": h.identity,
+                        "known_host_required": h.known_host_required
+                    })
+                })
+                .collect();
+            println!("{}", serde_json::to_string(&redacted_hosts)?);
+        } else {
+            println!("{}", serde_json::to_string(&hosts)?);
+        }
     } else if !global.quiet {
         if hosts.is_empty() {
             println!("No SSH host profiles configured.");
         } else {
             for h in &hosts {
-                println!(
-                    "{:<18}  {}@{}:{}  identity={}",
-                    h.name, h.user, h.host, h.port, h.identity
-                );
+                if is_agent {
+                    println!(
+                        "{:<18}  [REDACTED]@[REDACTED]:{}  identity={}",
+                        h.name, h.port, h.identity
+                    );
+                } else {
+                    println!(
+                        "{:<18}  {}@{}:{}  identity={}",
+                        h.name, h.user, h.host, h.port, h.identity
+                    );
+                }
             }
         }
     }
