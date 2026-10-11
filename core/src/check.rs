@@ -129,6 +129,8 @@ pub fn check_adhoc(vault: &Vault, req: &AdHocCheckRequest) -> Result<CheckResult
         method: "GET",
         command: None,
         has_active_consent: false,
+        recent_request_count: None,
+        payload_bytes: None,
     };
     match policy::evaluate(&policy_request) {
         PolicyDecision::Allow => {}
@@ -251,6 +253,8 @@ pub fn check_cataloged(
         method: "GET",
         command: None,
         has_active_consent: false,
+        recent_request_count: None,
+        payload_bytes: None,
     };
     match policy::evaluate(&policy_request) {
         PolicyDecision::Allow => {}

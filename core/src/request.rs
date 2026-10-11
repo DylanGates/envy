@@ -58,6 +58,8 @@ pub fn execute(
         method: req.method,
         command: None,
         has_active_consent,
+        recent_request_count: None,
+        payload_bytes: None,
     };
     match policy::evaluate(&policy_request) {
         PolicyDecision::Allow => {}
