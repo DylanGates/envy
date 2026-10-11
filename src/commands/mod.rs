@@ -30,7 +30,11 @@ pub fn dispatch(cli: Cli) -> anyhow::Result<()> {
             remediate,
             restore,
         } => scan::run(path, remediate, restore, global),
-        Commands::Add { name, from_env } => add::run(name, from_env, global),
+        Commands::Add {
+            name,
+            from_env,
+            rotate_after_days,
+        } => add::run(name, from_env, rotate_after_days, global),
         Commands::List => list::run(global),
         Commands::Show {
             reference,

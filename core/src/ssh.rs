@@ -29,6 +29,65 @@ pub struct SshHostProfile {
     pub known_host_required: bool,
 }
 
+/// Represents a parsed Host block from ~/.ssh/config.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SshConfigEntry {
+    pub host_alias: String,
+    pub hostname: Option<String>,
+    pub user: Option<String>,
+    pub port: Option<u16>,
+    pub identity_file: Option<String>,
+}
+
+/// Parses an OpenSSH config file (e.g. `~/.ssh/config`) into entries.
+pub fn parse_ssh_config(content: &str) -> Vec<SshConfigEntry> {
+    let mut entries = Vec::new();
+    let mut current: Option<SshConfigEntry> = None;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+
+        let mut parts = trimmed.split_whitespace();
+        let Some(key) = parts.next() else { continue };
+        let value = parts.collect::<Vec<_>>().join(" ");
+
+        if key.eq_ignore_ascii_case("Host") {
+            if let Some(entry) = current.take() {
+                if !entry.host_alias.contains('*') && !entry.host_alias.contains('?') {
+                    entries.push(entry);
+                }
+            }
+            current = Some(SshConfigEntry {
+                host_alias: value,
+                hostname: None,
+                user: None,
+                port: None,
+                identity_file: None,
+            });
+        } else if let Some(entry) = &mut current {
+            if key.eq_ignore_ascii_case("HostName") {
+                entry.hostname = Some(value);
+            } else if key.eq_ignore_ascii_case("User") {
+                entry.user = Some(value);
+            } else if key.eq_ignore_ascii_case("Port") {
+                entry.port = value.parse().ok();
+            } else if key.eq_ignore_ascii_case("IdentityFile") {
+                entry.identity_file = Some(value);
+            }
+        }
+    }
+
+    if let Some(entry) = current {
+        if !entry.host_alias.contains('*') && !entry.host_alias.contains('?') {
+            entries.push(entry);
+        }
+    }
+
+    entries
+}
 /// Parses an OpenSSH or PEM private/public key string to extract the algorithm and fingerprint.
 pub fn inspect_ssh_key(content: &str) -> Result<(String, String, Option<String>), CoreError> {
     let trimmed = content.trim();
@@ -88,6 +147,107 @@ pub fn import_ssh_key(
         fingerprint,
         comment,
     })
+}
+
+/// Generates a new SSH keypair directly using `ssh-keygen` and stores the private key in the vault.
+pub fn generate_ssh_key(
+    vault: &Vault,
+    name: &str,
+    algorithm: &str,
+    comment: Option<&str>,
+) -> Result<(SshKeyInfo, String), CoreError> {
+    let temp_dir = tempfile::tempdir().map_err(|e| CoreError::Io {
+        path: std::path::PathBuf::from("/tmp"),
+        source: e,
+    })?;
+    let key_file = temp_dir.path().join("id_generated");
+
+    let mut cmd = std::process::Command::new("ssh-keygen");
+    cmd.arg("-t")
+        .arg(algorithm)
+        .arg("-f")
+        .arg(&key_file)
+        .arg("-N")
+        .arg(""); // No passphrase
+
+    if let Some(c) = comment {
+        cmd.arg("-C").arg(c);
+    }
+
+    let output = cmd.output().map_err(|e| CoreError::Io {
+        path: key_file.clone(),
+        source: e,
+    })?;
+
+    if !output.status.success() {
+        let err_msg = String::from_utf8_lossy(&output.stderr);
+        return Err(CoreError::InvalidRequest(format!(
+            "ssh-keygen failed: {err_msg}"
+        )));
+    }
+
+    let private_bytes = std::fs::read(&key_file).map_err(|e| CoreError::Io {
+        path: key_file.clone(),
+        source: e,
+    })?;
+    let pub_file = temp_dir.path().join("id_generated.pub");
+    let public_str = std::fs::read_to_string(&pub_file).map_err(|e| CoreError::Io {
+        path: pub_file,
+        source: e,
+    })?;
+
+    let (key_type, fingerprint, comment_res) = inspect_ssh_key(&public_str)?;
+
+    vault.add_secret(name, &private_bytes)?;
+
+    Ok((
+        SshKeyInfo {
+            name: name.to_string(),
+            key_type,
+            fingerprint,
+            comment: comment_res.or_else(|| comment.map(str::to_string)),
+        },
+        public_str.trim().to_string(),
+    ))
+}
+
+/// Derives and formats the OpenSSH public key from a private key stored in the vault.
+pub fn export_ssh_public_key(vault: &Vault, name: &str) -> Result<String, CoreError> {
+    let raw_key = vault.get_secret(name)?;
+    let temp_dir = tempfile::tempdir().map_err(|e| CoreError::Io {
+        path: std::path::PathBuf::from("/tmp"),
+        source: e,
+    })?;
+    let key_file = temp_dir.path().join("id_key");
+    std::fs::write(&key_file, &raw_key).map_err(|e| CoreError::Io {
+        path: key_file.clone(),
+        source: e,
+    })?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&key_file, std::fs::Permissions::from_mode(0o600));
+    }
+
+    let output = std::process::Command::new("ssh-keygen")
+        .arg("-y")
+        .arg("-f")
+        .arg(&key_file)
+        .output()
+        .map_err(|e| CoreError::Io {
+            path: key_file.clone(),
+            source: e,
+        })?;
+
+    if !output.status.success() {
+        let err_msg = String::from_utf8_lossy(&output.stderr);
+        return Err(CoreError::InvalidRequest(format!(
+            "failed to extract public key via ssh-keygen: {err_msg}"
+        )));
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 /// Starts an SSH agent listener on `socket_path` to answer agent identity requests.
 pub fn serve_ssh_agent(_vault: &Vault, socket_path: &Path) -> Result<(), CoreError> {

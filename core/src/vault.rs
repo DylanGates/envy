@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS secrets (
     nonce BLOB NOT NULL,
     fingerprint TEXT NOT NULL,
     risk TEXT,
+    rotate_after_days INTEGER,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -69,7 +70,9 @@ pub struct SecretMetadata {
     pub updated_at: String,
     /// Calculated age in days since creation or last update.
     pub age_days: i64,
-    /// Flagged if age exceeds 90 days.
+    /// Custom rotation interval in days (defaults to 90 days if not set).
+    pub rotate_after_days: Option<i64>,
+    /// Flagged if age exceeds rotate_after_days (or 90 days default).
     pub is_stale: bool,
 }
 
@@ -105,14 +108,24 @@ impl Vault {
     /// Encrypts `value` and stores it under `name`. Fails with
     /// [`CoreError::SecretAlreadyExists`] if `name` is already in use.
     pub fn add_secret(&self, name: &str, value: &[u8]) -> Result<(), CoreError> {
+        self.add_secret_with_rotation(name, value, None)
+    }
+
+    /// Encrypts `value` and stores it with an optional `rotate_after_days` interval.
+    pub fn add_secret_with_rotation(
+        &self,
+        name: &str,
+        value: &[u8],
+        rotate_after_days: Option<i64>,
+    ) -> Result<(), CoreError> {
         let enc_key = crate::crypto::derive_encryption_key(&self.key);
         let fp_key = crate::crypto::derive_fingerprint_key(&self.key);
         let (nonce, ciphertext) = crate::crypto::encrypt(&enc_key, value);
         let fingerprint = crate::crypto::fingerprint(&fp_key, value);
 
         let result = self.conn.execute(
-            "INSERT INTO secrets (id, name, ciphertext, nonce, fingerprint) VALUES (?1, ?2, ?3, ?4, ?5)",
-            rusqlite::params![name, name, ciphertext, nonce.as_slice(), fingerprint],
+            "INSERT INTO secrets (id, name, ciphertext, nonce, fingerprint, rotate_after_days) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![name, name, ciphertext, nonce.as_slice(), fingerprint, rotate_after_days],
         );
 
         match result {
@@ -150,11 +163,14 @@ impl Vault {
     pub fn list_secrets(&self) -> Result<Vec<SecretMetadata>, CoreError> {
         let mut stmt = self.conn.prepare(
             "SELECT id, name, provider, credential_kind, risk, created_at, updated_at,
-                    CAST((julianday(CURRENT_TIMESTAMP) - julianday(created_at)) AS INTEGER) AS age_days
+                    CAST((julianday(CURRENT_TIMESTAMP) - julianday(created_at)) AS INTEGER) AS age_days,
+                    rotate_after_days
              FROM secrets ORDER BY name ASC",
         )?;
         let rows = stmt.query_map([], |row| {
             let age_days: i64 = row.get(7).unwrap_or(0);
+            let rotate_after_days: Option<i64> = row.get(8).unwrap_or(None);
+            let threshold = rotate_after_days.unwrap_or(90);
             Ok(SecretMetadata {
                 id: row.get(0)?,
                 name: row.get(1)?,
@@ -164,7 +180,8 @@ impl Vault {
                 created_at: row.get(5)?,
                 updated_at: row.get(6)?,
                 age_days,
-                is_stale: age_days >= 90,
+                rotate_after_days,
+                is_stale: age_days >= threshold,
             })
         })?;
         rows.collect::<Result<Vec<_>, _>>().map_err(CoreError::from)
@@ -177,11 +194,14 @@ impl Vault {
         self.conn
             .query_row(
                 "SELECT id, name, provider, credential_kind, risk, created_at, updated_at,
-                        CAST((julianday(CURRENT_TIMESTAMP) - julianday(created_at)) AS INTEGER) AS age_days
+                        CAST((julianday(CURRENT_TIMESTAMP) - julianday(created_at)) AS INTEGER) AS age_days,
+                        rotate_after_days
                  FROM secrets WHERE id = ?1",
                 rusqlite::params![name],
                 |row| {
                     let age_days: i64 = row.get(7).unwrap_or(0);
+                    let rotate_after_days: Option<i64> = row.get(8).unwrap_or(None);
+                    let threshold = rotate_after_days.unwrap_or(90);
                     Ok(SecretMetadata {
                         id: row.get(0)?,
                         name: row.get(1)?,
@@ -191,7 +211,8 @@ impl Vault {
                         created_at: row.get(5)?,
                         updated_at: row.get(6)?,
                         age_days,
-                        is_stale: age_days >= 90,
+                        rotate_after_days,
+                        is_stale: age_days >= threshold,
                     })
                 },
             )
@@ -466,6 +487,11 @@ fn open_with_keystore(project_root: &Path, keystore: &dyn KeyStore) -> Result<Va
     // up schema additions.
     let tx = conn.transaction()?;
     tx.execute_batch(SCHEMA)?;
+    // Backward-compatible schema migration for existing databases
+    let _ = tx.execute(
+        "ALTER TABLE secrets ADD COLUMN rotate_after_days INTEGER",
+        [],
+    );
     tx.commit()?;
 
     Ok(Vault {

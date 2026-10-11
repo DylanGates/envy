@@ -152,6 +152,17 @@ pub fn evaluate_with_policy(request: &PolicyRequest, policy: &ProjectPolicy) -> 
 
     // 2. Command whitelist checks (for SSH exec)
     if let Some(cmd) = request.command {
+        let cmd_trim = cmd.trim();
+
+        // Block any command that references .env (e.g. grep, cat, head, tail, etc.)
+        if is_env_file_involved(cmd_trim) {
+            return PolicyDecision::Deny {
+                reason: format!(
+                    "execution blocked: command references .env file ('{cmd_trim}'). Agents are prohibited from viewing raw env secrets."
+                ),
+            };
+        }
+
         if let Some(target) = request.domain.or(request.provider) {
             if let Some(host_policy) = policy.hosts.get(target) {
                 if !host_policy.allowed_commands.is_empty() {
@@ -195,6 +206,27 @@ pub fn evaluate_with_policy(request: &PolicyRequest, policy: &ProjectPolicy) -> 
             }
         }
     }
+}
+
+/// Checks if a command references `.env` files (e.g. `.env`, `.env.local`, `path/.env`, etc.)
+pub fn is_env_file_involved(command: &str) -> bool {
+    // Look for occurrences of .env
+    for token in command.split_whitespace() {
+        let clean = token.trim_matches(|c: char| c == '"' || c == '\'' || c == ';' || c == '|' || c == '&');
+        if clean == ".env" || clean.starts_with(".env.") || clean.ends_with("/.env") || clean.contains("/.env.") || clean.contains("/.env") {
+            return true;
+        }
+    }
+    // Also catch command-line args like --env-file=.env or <.env or >.env
+    if command.contains(".env") {
+        let lower = command.to_lowercase();
+        for part in lower.split(|c: char| c.is_whitespace() || c == '=' || c == '<' || c == '>' || c == ';' || c == '|' || c == '&' || c == '"' || c == '\'') {
+            if part == ".env" || part.starts_with(".env.") || part.ends_with("/.env") || part.contains("/.env.") {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// Compatibility wrapper for evaluating requests without explicit policy file.
@@ -316,5 +348,33 @@ mod tests {
             evaluate_with_policy(&approved_req, &policy),
             PolicyDecision::Allow
         );
+    }
+
+    #[test]
+    fn is_env_file_involved_detects_env_access() {
+        assert!(is_env_file_involved("cat .env"));
+        assert!(is_env_file_involved("grep SECRET .env"));
+        assert!(is_env_file_involved("grep -i key .env.production"));
+        assert!(is_env_file_involved("head -n 10 ./config/.env"));
+        assert!(is_env_file_involved("python script.py --env-file=.env"));
+        assert!(!is_env_file_involved("ls -la"));
+        assert!(!is_env_file_involved("echo environment"));
+        assert!(!is_env_file_involved("uptime"));
+    }
+
+    #[test]
+    fn command_referencing_env_is_blocked_by_policy() {
+        let policy = ProjectPolicy::default();
+        let req = PolicyRequest {
+            operation: "ssh_exec",
+            provider: Some("production"),
+            domain: Some("production"),
+            agent_identity: Some("claude_code"),
+            method: "EXEC",
+            command: Some("cat .env"),
+            has_active_consent: false,
+        };
+        let decision = evaluate_with_policy(&req, &policy);
+        assert!(matches!(decision, PolicyDecision::Deny { reason } if reason.contains(".env")));
     }
 }
