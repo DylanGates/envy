@@ -40,4 +40,28 @@ fn test_cli_rotation_staleness_and_expiry() {
     assert!(list_json.contains("age_days"));
     assert!(list_json.contains("is_stale"));
     assert!(list_json.contains("false")); // Fresh secret is not stale
+
+    // 4. Add secret with custom rotate-after-days reminder interval
+    let mut add_custom = Command::new(envy_bin)
+        .args(["add", "DB_PASS", "--non-interactive", "--rotate-after-days", "30"])
+        .current_dir(project_dir)
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    {
+        use std::io::Write;
+        let mut stdin = add_custom.stdin.take().unwrap();
+        stdin.write_all(b"supersecretpass\n").unwrap();
+    }
+    assert!(add_custom.wait().unwrap().success());
+
+    // 5. Verify show DB_PASS displays custom rotation interval
+    let show_output = Command::new(envy_bin)
+        .args(["show", "DB_PASS", "--metadata-only", "--json"])
+        .current_dir(project_dir)
+        .output()
+        .expect("show failed");
+    assert!(show_output.status.success());
+    let show_json = String::from_utf8_lossy(&show_output.stdout);
+    assert!(show_json.contains("\"rotate_after_days\":30"));
 }

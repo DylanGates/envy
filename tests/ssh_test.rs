@@ -84,4 +84,25 @@ fn test_cli_ssh_key_import_and_host_profile() {
     assert!(list_out.contains("prod-server"));
     assert!(list_out.contains("203.0.113.10"));
     assert!(list_out.contains("deploy"));
+
+    // 7. Generate a new SSH keypair directly inside envy vault
+    let gen_key = Command::new(envy_bin)
+        .args(["ssh", "generate", "staging-key", "--algorithm", "ed25519", "--json"])
+        .current_dir(project_dir)
+        .output()
+        .expect("ssh generate failed");
+    assert!(gen_key.status.success());
+    let gen_out = String::from_utf8_lossy(&gen_key.stdout);
+    assert!(gen_out.contains("staging-key"));
+    assert!(gen_out.contains("ssh-ed25519"));
+
+    // 8. Export the public key from the vault
+    let export_pub = Command::new(envy_bin)
+        .args(["ssh", "export", "staging-key"])
+        .current_dir(project_dir)
+        .output()
+        .expect("ssh export failed");
+    assert!(export_pub.status.success());
+    let pub_out = String::from_utf8_lossy(&export_pub.stdout);
+    assert!(pub_out.starts_with("ssh-ed25519"));
 }
