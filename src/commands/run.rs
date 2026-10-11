@@ -4,6 +4,14 @@ use envy_core::audit::AuditEvent;
 use crate::cli::GlobalArgs;
 
 pub fn run(command: Vec<String>, global: &GlobalArgs) -> anyhow::Result<()> {
+    let full_cmd = command.join(" ");
+    if envy_core::policy::is_env_file_involved(&full_cmd) {
+        anyhow::bail!(
+            "execution blocked: command references a .env file ('{full_cmd}'). \
+             Governance policy prohibits tools and agents from reading or exposing raw .env secrets."
+        );
+    }
+
     let cwd = std::env::current_dir()?;
     let vault = envy_core::vault::open(&cwd)?;
     let secrets = vault.list_secrets()?;
