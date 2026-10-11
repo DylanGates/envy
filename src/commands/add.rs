@@ -112,7 +112,8 @@ fn prompt_interactive_wizard(
             let user = prompt_line("SSH username (e.g. ubuntu, root): ")?;
             let port_str = prompt_line("SSH port [22]: ").unwrap_or_else(|_| "22".to_string());
             let port: u16 = port_str.parse().unwrap_or(22);
-            let identity = prompt_line("SSH Key Identity (stored secret name or private key path): ")?;
+            let identity =
+                prompt_line("SSH Key Identity (stored secret name or private key path): ")?;
 
             let cwd = std::env::current_dir()?;
             let vault = envy_core::vault::open(&cwd)?;
@@ -120,8 +121,15 @@ fn prompt_interactive_wizard(
             // If identity is a path on disk, import it as an SSH key
             let resolved_identity = if std::path::Path::new(&identity).exists() {
                 let key_name = format!("{name}_key");
-                let info = envy_core::ssh::import_ssh_key(&vault, &key_name, std::path::Path::new(&identity))?;
-                println!("Imported SSH key from '{identity}' as identity '{key_name}' ({})", info.key_type);
+                let info = envy_core::ssh::import_ssh_key(
+                    &vault,
+                    &key_name,
+                    std::path::Path::new(&identity),
+                )?;
+                println!(
+                    "Imported SSH key from '{identity}' as identity '{key_name}' ({})",
+                    info.key_type
+                );
                 key_name
             } else {
                 identity
@@ -145,7 +153,10 @@ fn prompt_interactive_wizard(
                 outcome: "success",
                 redaction_summary: Some(&format!("configured host profile '{}'", name)),
             })?;
-            println!("Added host profile '{}' ({}@{}:{})", profile.name, profile.user, profile.host, profile.port);
+            println!(
+                "Added host profile '{}' ({}@{}:{})",
+                profile.name, profile.user, profile.host, profile.port
+            );
             Ok(())
         }
         "3" => {
@@ -162,10 +173,17 @@ fn prompt_interactive_wizard(
             let content = std::fs::read_to_string(&ssh_config_path)?;
             let entries = envy_core::ssh::parse_ssh_config(&content);
             if entries.is_empty() {
-                bail!("No valid Host entries found in {}", ssh_config_path.display());
+                bail!(
+                    "No valid Host entries found in {}",
+                    ssh_config_path.display()
+                );
             }
 
-            println!("\nFound {} host(s) in {}:", entries.len(), ssh_config_path.display());
+            println!(
+                "\nFound {} host(s) in {}:",
+                entries.len(),
+                ssh_config_path.display()
+            );
             for (i, entry) in entries.iter().enumerate() {
                 let target = entry.hostname.as_deref().unwrap_or(&entry.host_alias);
                 let user = entry.user.as_deref().unwrap_or("user");
@@ -180,7 +198,10 @@ fn prompt_interactive_wizard(
             let chosen = &entries[idx - 1];
 
             let name = chosen.host_alias.clone();
-            let host = chosen.hostname.clone().unwrap_or_else(|| chosen.host_alias.clone());
+            let host = chosen
+                .hostname
+                .clone()
+                .unwrap_or_else(|| chosen.host_alias.clone());
             let user = chosen.user.clone().unwrap_or_else(|| "root".to_string());
             let port = chosen.port.unwrap_or(22);
 
@@ -188,15 +209,20 @@ fn prompt_interactive_wizard(
             let vault = envy_core::vault::open(&cwd)?;
 
             let identity_name = if let Some(id_path) = &chosen.identity_file {
-                let expanded = if id_path.starts_with("~/") {
-                    home.join(&id_path[2..])
+                let expanded = if let Some(stripped) = id_path.strip_prefix("~/") {
+                    home.join(stripped)
                 } else {
                     std::path::PathBuf::from(id_path)
                 };
                 if expanded.exists() {
                     let key_name = format!("{name}_key");
                     let info = envy_core::ssh::import_ssh_key(&vault, &key_name, &expanded)?;
-                    println!("Imported SSH identity from '{}' as '{}' ({})", expanded.display(), key_name, info.key_type);
+                    println!(
+                        "Imported SSH identity from '{}' as '{}' ({})",
+                        expanded.display(),
+                        key_name,
+                        info.key_type
+                    );
                     key_name
                 } else {
                     format!("{name}_key")
@@ -221,9 +247,15 @@ fn prompt_interactive_wizard(
                 operation: "ssh_add_host",
                 endpoint_host: Some(&profile.host),
                 outcome: "success",
-                redaction_summary: Some(&format!("imported host profile '{}' from ssh config", name)),
+                redaction_summary: Some(&format!(
+                    "imported host profile '{}' from ssh config",
+                    name
+                )),
             })?;
-            println!("Added host profile '{}' ({}@{}:{}) from ssh config", profile.name, profile.user, profile.host, profile.port);
+            println!(
+                "Added host profile '{}' ({}@{}:{}) from ssh config",
+                profile.name, profile.user, profile.host, profile.port
+            );
             Ok(())
         }
         _ => bail!("invalid choice '{choice}'"),

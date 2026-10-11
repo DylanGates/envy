@@ -212,16 +212,36 @@ pub fn evaluate_with_policy(request: &PolicyRequest, policy: &ProjectPolicy) -> 
 pub fn is_env_file_involved(command: &str) -> bool {
     // Look for occurrences of .env
     for token in command.split_whitespace() {
-        let clean = token.trim_matches(|c: char| c == '"' || c == '\'' || c == ';' || c == '|' || c == '&');
-        if clean == ".env" || clean.starts_with(".env.") || clean.ends_with("/.env") || clean.contains("/.env.") || clean.contains("/.env") {
+        let clean =
+            token.trim_matches(|c: char| c == '"' || c == '\'' || c == ';' || c == '|' || c == '&');
+        if clean == ".env"
+            || clean.starts_with(".env.")
+            || clean.ends_with("/.env")
+            || clean.contains("/.env.")
+            || clean.contains("/.env")
+        {
             return true;
         }
     }
     // Also catch command-line args like --env-file=.env or <.env or >.env
     if command.contains(".env") {
         let lower = command.to_lowercase();
-        for part in lower.split(|c: char| c.is_whitespace() || c == '=' || c == '<' || c == '>' || c == ';' || c == '|' || c == '&' || c == '"' || c == '\'') {
-            if part == ".env" || part.starts_with(".env.") || part.ends_with("/.env") || part.contains("/.env.") {
+        for part in lower.split(|c: char| {
+            c.is_whitespace()
+                || c == '='
+                || c == '<'
+                || c == '>'
+                || c == ';'
+                || c == '|'
+                || c == '&'
+                || c == '"'
+                || c == '\''
+        }) {
+            if part == ".env"
+                || part.starts_with(".env.")
+                || part.ends_with("/.env")
+                || part.contains("/.env.")
+            {
                 return true;
             }
         }

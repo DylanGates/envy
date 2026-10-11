@@ -81,12 +81,8 @@ fn generate(
     let cwd = std::env::current_dir()?;
     let vault = envy_core::vault::open(&cwd)?;
 
-    let (info, public_key) = envy_core::ssh::generate_ssh_key(
-        &vault,
-        &name,
-        &algorithm,
-        comment.as_deref(),
-    )?;
+    let (info, public_key) =
+        envy_core::ssh::generate_ssh_key(&vault, &name, &algorithm, comment.as_deref())?;
 
     vault.log_event(&AuditEvent {
         subject: Some("cli"),
@@ -117,11 +113,7 @@ fn generate(
     Ok(())
 }
 
-fn export_public(
-    name: String,
-    out: Option<PathBuf>,
-    global: &GlobalArgs,
-) -> anyhow::Result<()> {
+fn export_public(name: String, out: Option<PathBuf>, global: &GlobalArgs) -> anyhow::Result<()> {
     let cwd = std::env::current_dir()?;
     let vault = envy_core::vault::open(&cwd)?;
 

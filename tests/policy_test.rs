@@ -71,7 +71,17 @@ allowed_commands = ["uptime", "df -h"]
     assert!(add_key.wait().unwrap().success());
 
     let add_host = Command::new(envy_bin)
-        .args(["ssh", "add", "prod_server", "--host", "192.168.1.100", "--user", "admin", "--identity", "prod_key"])
+        .args([
+            "ssh",
+            "add",
+            "prod_server",
+            "--host",
+            "192.168.1.100",
+            "--user",
+            "admin",
+            "--identity",
+            "prod_key",
+        ])
         .current_dir(project_dir)
         .output()
         .expect("add host failed");

@@ -43,7 +43,13 @@ fn test_cli_rotation_staleness_and_expiry() {
 
     // 4. Add secret with custom rotate-after-days reminder interval
     let mut add_custom = Command::new(envy_bin)
-        .args(["add", "DB_PASS", "--non-interactive", "--rotate-after-days", "30"])
+        .args([
+            "add",
+            "DB_PASS",
+            "--non-interactive",
+            "--rotate-after-days",
+            "30",
+        ])
         .current_dir(project_dir)
         .stdin(std::process::Stdio::piped())
         .spawn()
