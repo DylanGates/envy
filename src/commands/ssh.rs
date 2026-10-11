@@ -309,6 +309,8 @@ fn exec(name: String, command: Vec<String>, global: &GlobalArgs) -> anyhow::Resu
         method: "EXEC",
         command: Some(&cmd_str),
         has_active_consent: false,
+        recent_request_count: None,
+        payload_bytes: Some(cmd_str.len()),
     };
     match envy_core::policy::evaluate_with_policy(&policy_req, &policy) {
         envy_core::policy::PolicyDecision::Allow => {}

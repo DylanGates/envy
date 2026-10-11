@@ -37,6 +37,10 @@ pub fn run(remediate: bool, command: Vec<String>, global: &GlobalArgs) -> anyhow
         method: "EXEC",
         command: Some(&full_cmd),
         has_active_consent: false,
+        recent_request_count: agent_id
+            .as_deref()
+            .and_then(|id| vault.count_recent_events_for_subject(id).ok()),
+        payload_bytes: Some(full_cmd.len()),
     };
 
     match envy_core::policy::evaluate_with_policy(&policy_req, &policy) {
