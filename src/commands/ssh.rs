@@ -87,7 +87,6 @@ fn log(
     Ok(())
 }
 
-#[cfg(unix)]
 /// Evaluates the project policy for an SSH operation; logs and bails on deny.
 fn policy_gate(
     vault: &Vault,
@@ -610,6 +609,10 @@ fn connect(name: String, global: &GlobalArgs) -> anyhow::Result<()> {
 
 fn exec(name: String, command: Vec<String>, global: &GlobalArgs) -> anyhow::Result<()> {
     let cmd_str = command.join(" ");
+    let cwd = std::env::current_dir()?;
+    let vault = envy_core::vault::open(&cwd)?;
+    policy_gate(&vault, "ssh_exec", &name, Some(&cmd_str))?;
+
     #[cfg(not(unix))]
     {
         let _ = (name, global, cmd_str);
@@ -617,7 +620,6 @@ fn exec(name: String, command: Vec<String>, global: &GlobalArgs) -> anyhow::Resu
     }
     #[cfg(unix)]
     {
-        let cwd = std::env::current_dir()?;
         let (profile, session) = start_session(&cwd, "ssh_exec", &name, Some(&cmd_str))?;
         let program = command.first().map(String::as_str).unwrap_or("");
         session.log(

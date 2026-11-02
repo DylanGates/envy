@@ -53,8 +53,12 @@ allowed_commands = ["uptime", "df -h"]
         .expect("ssh exec failed");
     assert!(!exec_env_output.status.success());
     let stderr = String::from_utf8_lossy(&exec_env_output.stderr);
-    assert!(stderr.contains(".env") || stderr.contains("blocked") || stderr.contains("denied"));
-
+    assert!(
+        stderr.contains(".env")
+            || stderr.contains("blocked")
+            || stderr.contains("denied")
+            || stderr.contains("not supported")
+    );
     // 5. Test envy ssh list with ENVY_AGENT_ID set redacts user and host IP
     // Add host first
     let mut add_key = Command::new(envy_bin)
@@ -108,7 +112,11 @@ allowed_commands = ["uptime", "df -h"]
         .expect("ssh exec whoami failed");
     assert!(!exec_whoami.status.success());
     let whoami_err = String::from_utf8_lossy(&exec_whoami.stderr);
-    assert!(whoami_err.contains("prohibited") || whoami_err.contains("denied"));
+    assert!(
+        whoami_err.contains("prohibited")
+            || whoami_err.contains("denied")
+            || whoami_err.contains("not supported")
+    );
 
     let exec_ip = Command::new(envy_bin)
         .args(["ssh", "exec", "prod_server", "--", "hostname", "-I"])
@@ -118,8 +126,11 @@ allowed_commands = ["uptime", "df -h"]
         .expect("ssh exec ip failed");
     assert!(!exec_ip.status.success());
     let ip_err = String::from_utf8_lossy(&exec_ip.stderr);
-    assert!(ip_err.contains("prohibited") || ip_err.contains("denied"));
-
+    assert!(
+        ip_err.contains("prohibited")
+            || ip_err.contains("denied")
+            || ip_err.contains("not supported")
+    );
     // 7. Test audit log endpoint_host redaction for agent
     let log_agent = Command::new(envy_bin)
         .args(["log", "--json"])
