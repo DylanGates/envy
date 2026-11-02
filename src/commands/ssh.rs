@@ -8,7 +8,6 @@
 
 use anyhow::Context;
 use envy_core::audit::{AuditEvent, subject_for};
-#[cfg(unix)]
 use envy_core::policy::{PolicyDecision, PolicyRequest};
 use envy_core::ssh::{SshHostProfile, import_ssh_key};
 use envy_core::vault::Vault;
