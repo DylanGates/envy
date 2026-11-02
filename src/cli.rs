@@ -242,12 +242,68 @@ pub enum Commands {
         #[command(subcommand)]
         action: HookAction,
     },
+
+    /// Agent-side command/file-access governance (PreToolUse hooks).
+    ///
+    /// Best-effort: blocks the easy path of an agent running raw `ssh`, reading
+    /// `.env` / `~/.ssh/id_*`, dumping `printenv`, etc. See
+    /// `docs/agent-governance.md`. Not a sandbox.
+    Guard {
+        #[command(subcommand)]
+        action: GuardAction,
+    },
 }
 
 #[derive(Debug, Subcommand)]
 pub enum HookAction {
     /// Install an envy pre-commit hook in .git/hooks/pre-commit.
     Install,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum GuardAction {
+    /// Classify a shell command. Exit 0 = allow, exit 2 = deny.
+    CheckCommand {
+        /// The full command line (as an agent Bash/Shell tool would run it).
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true, required = true)]
+        command: Vec<String>,
+    },
+    /// Classify a file path for a Read/Edit/Write-style tool call.
+    CheckPath {
+        /// Absolute or relative path the agent is about to open.
+        path: String,
+        /// Treat as a write/edit (also blocks protected-config writes).
+        #[arg(long)]
+        write: bool,
+    },
+    /// PreToolUse / beforeShellExecution / beforeReadFile entrypoint.
+    ///
+    /// Reads the client's JSON payload from stdin and emits the client's
+    /// deny/allow JSON on stdout. Exit 0 always when the JSON response is
+    /// written; exit 2 as a fallback deny when stdin is unreadable.
+    Hook {
+        /// Which agent harness is calling us.
+        #[arg(long, value_enum)]
+        client: GuardClientArg,
+    },
+    /// Install envy PreToolUse hooks into a client's settings/hooks config.
+    Install {
+        /// Which client to install for.
+        #[arg(long, value_enum)]
+        client: GuardClientArg,
+        /// Project-local or user-global config. Defaults to project.
+        #[arg(long, value_enum)]
+        scope: Option<ScopeArg>,
+        /// Overwrite an existing envy-guard entry (backs up the file first).
+        #[arg(long)]
+        force: bool,
+    },
+}
+
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+pub enum GuardClientArg {
+    ClaudeCode,
+    Cursor,
 }
 
 #[derive(Debug, Subcommand)]
@@ -267,7 +323,7 @@ pub enum SshAction {
         /// Name of the key identity to create in the vault.
         name: String,
 
-        /// Key algorithm (ed25519 or rsa).
+        /// Key algorithm (only ed25519 is supported).
         #[arg(long, default_value = "ed25519")]
         algorithm: String,
 
@@ -314,6 +370,20 @@ pub enum SshAction {
     /// List configured SSH host profiles.
     List,
 
+    /// Scan a host profile's server key and pin it (required before connecting).
+    Trust {
+        /// Name of the configured host profile.
+        name: String,
+
+        /// Pin without an interactive confirmation prompt.
+        #[arg(long)]
+        yes: bool,
+
+        /// Expected SHA256 fingerprint; pinning fails if the scanned key differs.
+        #[arg(long)]
+        fingerprint: Option<String>,
+    },
+
     /// Connect interactively to a configured SSH host profile.
     Connect {
         /// Name of the configured host profile.
@@ -348,11 +418,23 @@ pub enum SshAction {
         remote_port: u16,
     },
 
-    /// Run the background SSH Agent daemon answering signing requests over socket.
+    /// Run the envy SSH agent, answering signing requests over a Unix socket.
     Agent {
-        /// Socket path to bind (defaults to ~/.envy/ssh-agent.sock).
+        /// Socket path to bind (defaults to <project>/.envy/ssh-agent.sock).
         #[arg(long)]
         socket: Option<PathBuf>,
+
+        /// Identity to serve (repeatable). Defaults to the identities used by host profiles.
+        #[arg(long = "identity")]
+        identity: Vec<String>,
+
+        /// Print `SSH_AUTH_SOCK=…; export SSH_AUTH_SOCK;` for `eval`.
+        #[arg(long)]
+        print_env: bool,
+
+        /// Bind under ~/.envy instead of the project's .envy directory.
+        #[arg(long)]
+        global: bool,
     },
 }
 
