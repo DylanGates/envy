@@ -7,6 +7,7 @@ pub mod crypto;
 pub mod doctor;
 pub mod dotenv;
 pub mod error;
+pub mod guard;
 pub mod ipc;
 pub mod keychain;
 pub mod policy;
@@ -17,6 +18,7 @@ pub mod request;
 pub mod rpc;
 pub mod scanner;
 pub mod ssh;
+pub mod ssh_agent;
 pub mod vault;
 
 pub use error::CoreError;
