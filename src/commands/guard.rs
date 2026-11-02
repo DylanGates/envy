@@ -461,7 +461,7 @@ fn install_claude(path: &Path, exe: &str, force: bool) -> anyhow::Result<()> {
         .as_array_mut()
         .context("\"hooks.PreToolUse\" must be a JSON array")?;
 
-    // Look for an existing envy-owned entry (command contains "envy guard hook").
+    // Look for an existing envy-owned entry.
     let already = pre.iter().any(|entry| {
         entry
             .get("hooks")
@@ -470,7 +470,7 @@ fn install_claude(path: &Path, exe: &str, force: bool) -> anyhow::Result<()> {
                 arr.iter().any(|h| {
                     h.get("command")
                         .and_then(|c| c.as_str())
-                        .map(|s| s.contains("envy guard hook"))
+                        .map(is_envy_guard_hook)
                         .unwrap_or(false)
                 })
             })
@@ -493,7 +493,7 @@ fn install_claude(path: &Path, exe: &str, force: bool) -> anyhow::Result<()> {
                     arr.iter().any(|h| {
                         h.get("command")
                             .and_then(|c| c.as_str())
-                            .map(|s| s.contains("envy guard hook"))
+                            .map(is_envy_guard_hook)
                             .unwrap_or(false)
                     })
                 })
@@ -561,7 +561,7 @@ fn install_cursor(path: &Path, exe: &str, force: bool) -> anyhow::Result<()> {
         let already = arr.iter().any(|h| {
             h.get("command")
                 .and_then(|c| c.as_str())
-                .map(|s| s.contains("envy guard hook"))
+                .map(is_envy_guard_hook)
                 .unwrap_or(false)
         });
         if already && !force {
@@ -579,7 +579,7 @@ fn install_cursor(path: &Path, exe: &str, force: bool) -> anyhow::Result<()> {
             arr.retain(|h| {
                 !h.get("command")
                     .and_then(|c| c.as_str())
-                    .map(|s| s.contains("envy guard hook"))
+                    .map(is_envy_guard_hook)
                     .unwrap_or(false)
             });
         }
@@ -590,6 +590,10 @@ fn install_cursor(path: &Path, exe: &str, force: bool) -> anyhow::Result<()> {
     std::fs::write(path, out + "\n")
         .with_context(|| format!("failed to write {}", path.display()))?;
     Ok(())
+}
+
+fn is_envy_guard_hook(s: &str) -> bool {
+    s.contains("guard hook") && (s.contains("envy") || s.contains("envy.exe"))
 }
 
 /// Used only so `cargo test` can assert the ExitCode shape of a deny without

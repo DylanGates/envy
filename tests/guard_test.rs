@@ -198,7 +198,7 @@ fn install_writes_claude_and_cursor_hooks() {
         String::from_utf8_lossy(&out.stderr)
     );
     let settings = std::fs::read_to_string(dir.path().join(".claude/settings.json")).unwrap();
-    assert!(settings.contains("envy guard hook --client claude-code"));
+    assert!(settings.contains("guard hook --client claude-code"));
     assert!(settings.contains("onFailure"));
     assert!(settings.contains("Bash|Read"));
 
@@ -211,7 +211,7 @@ fn install_writes_claude_and_cursor_hooks() {
         .unwrap();
     assert!(out.status.success());
     let hooks = std::fs::read_to_string(dir.path().join(".cursor/hooks.json")).unwrap();
-    assert!(hooks.contains("envy guard hook --client cursor"));
+    assert!(hooks.contains("guard hook --client cursor"));
     assert!(hooks.contains("beforeShellExecution"));
     assert!(hooks.contains("beforeReadFile"));
     assert!(hooks.contains("failClosed"));
