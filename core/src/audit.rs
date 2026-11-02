@@ -13,6 +13,15 @@ pub struct AuditEvent<'a> {
     pub redaction_summary: Option<&'a str>,
 }
 
+/// Resolves the audit `subject` for a caller: `agent:<id>` when an agent
+/// identity is asserted (e.g. via `ENVY_AGENT_ID`), otherwise `human`.
+pub fn subject_for(agent_id: Option<&str>) -> String {
+    match agent_id {
+        Some(id) if !id.trim().is_empty() => format!("agent:{}", id.trim()),
+        _ => "human".to_string(),
+    }
+}
+
 /// A stored audit event, as read back from the vault.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct AuditEventRecord {
@@ -152,4 +161,51 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].project.as_deref(), Some("/tmp/project-a"));
     }
+}
+
+/// Appends an audit event to `<project>/.envy/vault.db` **without** loading
+/// the vault encryption key.
+///
+/// Used by the agent-governance guard: a PreToolUse hook must be able to log
+/// a denial even when the OS keychain is locked / unavailable. Safe because
+/// audit rows never hold secrets (see [`AuditEvent`]). Returns `Ok(())` when
+/// no vault DB exists yet (nothing to append to) rather than failing closed —
+/// the guard's deny decision is independent of audit persistence.
+pub fn append_unkeyed(project_root: &std::path::Path, event: &AuditEvent) -> Result<(), CoreError> {
+    let db_path = project_root.join(".envy").join("vault.db");
+    if !db_path.exists() {
+        return Ok(());
+    }
+    let conn = rusqlite::Connection::open(&db_path)?;
+    // Match the Vault open path: WAL + busy_timeout so concurrent writers
+    // (MCP server / CLI) don't trip SQLITE_BUSY.
+    let _ = conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;");
+    // Ensure the table exists even on a vault created before audit_events.
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS audit_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            subject TEXT,
+            project TEXT,
+            provider TEXT,
+            operation TEXT NOT NULL,
+            endpoint_host TEXT,
+            outcome TEXT NOT NULL,
+            redaction_summary TEXT
+        );",
+    )?;
+    conn.execute(
+        "INSERT INTO audit_events (subject, project, provider, operation, endpoint_host, outcome, redaction_summary)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        rusqlite::params![
+            event.subject,
+            event.project,
+            event.provider,
+            event.operation,
+            event.endpoint_host,
+            event.outcome,
+            event.redaction_summary,
+        ],
+    )?;
+    Ok(())
 }

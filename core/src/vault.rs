@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -46,7 +46,12 @@ CREATE TABLE IF NOT EXISTS ssh_hosts (
     user TEXT NOT NULL,
     identity TEXT NOT NULL,
     known_host_required INTEGER NOT NULL DEFAULT 1,
+    host_key TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS vault_meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
 );
 "#;
 
@@ -102,9 +107,65 @@ pub struct Vault {
     /// lifetime. Never logged or printed. `add_secret` derives the
     /// encryption/fingerprint subkeys from it on demand.
     key: [u8; 32],
+    /// The project directory this vault lives under (`<root>/.envy/`).
+    project_root: PathBuf,
 }
 
 impl Vault {
+    /// The project directory this vault was opened from. Used to load the
+    /// project's `.envy/policy.toml` on every policy-checked path.
+    pub fn project_root(&self) -> &Path {
+        &self.project_root
+    }
+
+    /// Sets `credential_kind` on an existing secret (e.g. `"ssh_key"`).
+    pub fn set_credential_kind(&self, name: &str, kind: &str) -> Result<(), CoreError> {
+        let n = self.conn.execute(
+            "UPDATE secrets SET credential_kind = ?2, updated_at = CURRENT_TIMESTAMP WHERE id = ?1",
+            rusqlite::params![name, kind],
+        )?;
+        if n == 0 {
+            return Err(CoreError::SecretNotFound(name.to_string()));
+        }
+        Ok(())
+    }
+
+    /// Reads a value from the internal `vault_meta` key/value table.
+    pub(crate) fn get_meta(&self, key: &str) -> Result<Option<String>, CoreError> {
+        use rusqlite::OptionalExtension;
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT value FROM vault_meta WHERE key = ?1",
+                rusqlite::params![key],
+                |row| row.get(0),
+            )
+            .optional()?)
+    }
+
+    /// Writes a value to the internal `vault_meta` key/value table.
+    pub(crate) fn set_meta(&self, key: &str, value: &str) -> Result<(), CoreError> {
+        self.conn.execute(
+            "INSERT INTO vault_meta (key, value) VALUES (?1, ?2) \
+             ON CONFLICT(key) DO UPDATE SET value = ?2",
+            rusqlite::params![key, value],
+        )?;
+        Ok(())
+    }
+
+    /// Pins (or clears, with `None`) the OpenSSH host key for a host profile.
+    /// `host_key` is public data in `"<type> <base64>"` form.
+    pub fn set_ssh_host_key(&self, name: &str, host_key: Option<&str>) -> Result<(), CoreError> {
+        let n = self.conn.execute(
+            "UPDATE ssh_hosts SET host_key = ?2 WHERE name = ?1",
+            rusqlite::params![name, host_key],
+        )?;
+        if n == 0 {
+            return Err(CoreError::SecretNotFound(format!("SSH host '{name}'")));
+        }
+        Ok(())
+    }
+
     /// Encrypts `value` and stores it under `name`. Fails with
     /// [`CoreError::SecretAlreadyExists`] if `name` is already in use.
     pub fn add_secret(&self, name: &str, value: &[u8]) -> Result<(), CoreError> {
@@ -307,7 +368,9 @@ impl Vault {
         self.conn.execute(
             "INSERT INTO ssh_hosts (name, host, port, user, identity, known_host_required) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
-             ON CONFLICT(name) DO UPDATE SET host=?2, port=?3, user=?4, identity=?5, known_host_required=?6",
+             ON CONFLICT(name) DO UPDATE SET \
+               host_key = CASE WHEN host = ?2 AND port = ?3 THEN host_key ELSE NULL END, \
+               host=?2, port=?3, user=?4, identity=?5, known_host_required=?6",
             rusqlite::params![
                 profile.name,
                 profile.host,
@@ -323,7 +386,7 @@ impl Vault {
     /// Lists all configured SSH host profiles.
     pub fn list_ssh_hosts(&self) -> Result<Vec<crate::ssh::SshHostProfile>, CoreError> {
         let mut stmt = self.conn.prepare(
-            "SELECT name, host, port, user, identity, known_host_required FROM ssh_hosts ORDER BY name ASC",
+            "SELECT name, host, port, user, identity, known_host_required, host_key FROM ssh_hosts ORDER BY name ASC",
         )?;
 
         let rows = stmt.query_map([], |row| {
@@ -335,6 +398,7 @@ impl Vault {
                 user: row.get(3)?,
                 identity: row.get(4)?,
                 known_host_required: req != 0,
+                host_key: row.get(6)?,
             })
         })?;
 
@@ -351,7 +415,7 @@ impl Vault {
         let res: Option<crate::ssh::SshHostProfile> = self
             .conn
             .query_row(
-                "SELECT name, host, port, user, identity, known_host_required FROM ssh_hosts WHERE name = ?1",
+                "SELECT name, host, port, user, identity, known_host_required, host_key FROM ssh_hosts WHERE name = ?1",
                 rusqlite::params![name],
                 |row| {
                     let req: i32 = row.get(5)?;
@@ -362,6 +426,7 @@ impl Vault {
                         user: row.get(3)?,
                         identity: row.get(4)?,
                         known_host_required: req != 0,
+                        host_key: row.get(6)?,
                     })
                 },
             )
@@ -447,6 +512,7 @@ pub(crate) fn init_with_keystore(
         vault_id,
         conn,
         key,
+        project_root: project_root.to_path_buf(),
     })
 }
 
@@ -492,12 +558,16 @@ fn open_with_keystore(project_root: &Path, keystore: &dyn KeyStore) -> Result<Va
         "ALTER TABLE secrets ADD COLUMN rotate_after_days INTEGER",
         [],
     );
+    // M0 (G3): pinned host keys. Errors (column already exists) are ignored
+    // exactly like the migration above.
+    let _ = tx.execute("ALTER TABLE ssh_hosts ADD COLUMN host_key TEXT", []);
     tx.commit()?;
 
     Ok(Vault {
         vault_id: config.vault_id,
         conn,
         key,
+        project_root: project_root.to_path_buf(),
     })
 }
 
