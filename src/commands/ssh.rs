@@ -121,7 +121,6 @@ fn policy_gate(
     anyhow::bail!("policy denied {operation} on '{profile}': {reason}");
 }
 
-#[cfg(unix)]
 /// Refuses an unpinned profile that requires a pinned host key.
 fn pin_gate(vault: &Vault, operation: &str, profile: &SshHostProfile) -> anyhow::Result<()> {
     if let Err(e) = envy_core::ssh::ensure_host_pinned(profile) {
@@ -559,6 +558,12 @@ fn trust(
 }
 
 fn connect(name: String, global: &GlobalArgs) -> anyhow::Result<()> {
+    let cwd = std::env::current_dir()?;
+    let vault = envy_core::vault::open(&cwd)?;
+    policy_gate(&vault, "ssh_connect", &name, None)?;
+    let profile = vault.get_ssh_host(&name)?;
+    pin_gate(&vault, "ssh_connect", &profile)?;
+
     #[cfg(not(unix))]
     {
         let _ = (name, global);
@@ -611,6 +616,8 @@ fn exec(name: String, command: Vec<String>, global: &GlobalArgs) -> anyhow::Resu
     let cwd = std::env::current_dir()?;
     let vault = envy_core::vault::open(&cwd)?;
     policy_gate(&vault, "ssh_exec", &name, Some(&cmd_str))?;
+    let profile = vault.get_ssh_host(&name)?;
+    pin_gate(&vault, "ssh_exec", &profile)?;
 
     #[cfg(not(unix))]
     {
@@ -706,6 +713,12 @@ fn tunnel(
     remote_port: u16,
     global: &GlobalArgs,
 ) -> anyhow::Result<()> {
+    let cwd = std::env::current_dir()?;
+    let vault = envy_core::vault::open(&cwd)?;
+    policy_gate(&vault, "ssh_tunnel", &name, None)?;
+    let profile = vault.get_ssh_host(&name)?;
+    pin_gate(&vault, "ssh_tunnel", &profile)?;
+
     #[cfg(not(unix))]
     {
         let _ = (name, local_port, remote_host, remote_port, global);
