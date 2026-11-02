@@ -98,4 +98,36 @@ allowed_commands = ["uptime", "df -h"]
     assert!(agent_json.contains("[REDACTED]"));
     assert!(!agent_json.contains("192.168.1.100"));
     assert!(!agent_json.contains("\"user\":\"admin\""));
+
+    // 6. Test blocking of IP/identity discovery commands when agent is executing
+    let exec_whoami = Command::new(envy_bin)
+        .args(["ssh", "exec", "prod_server", "--", "whoami"])
+        .env("ENVY_AGENT_ID", "claude_code")
+        .current_dir(project_dir)
+        .output()
+        .expect("ssh exec whoami failed");
+    assert!(!exec_whoami.status.success());
+    let whoami_err = String::from_utf8_lossy(&exec_whoami.stderr);
+    assert!(whoami_err.contains("prohibited") || whoami_err.contains("denied"));
+
+    let exec_ip = Command::new(envy_bin)
+        .args(["ssh", "exec", "prod_server", "--", "hostname", "-I"])
+        .env("ENVY_AGENT_ID", "claude_code")
+        .current_dir(project_dir)
+        .output()
+        .expect("ssh exec ip failed");
+    assert!(!exec_ip.status.success());
+    let ip_err = String::from_utf8_lossy(&exec_ip.stderr);
+    assert!(ip_err.contains("prohibited") || ip_err.contains("denied"));
+
+    // 7. Test audit log endpoint_host redaction for agent
+    let log_agent = Command::new(envy_bin)
+        .args(["log", "--json"])
+        .env("ENVY_AGENT_ID", "claude_code")
+        .current_dir(project_dir)
+        .output()
+        .expect("log failed");
+    assert!(log_agent.status.success());
+    let log_json = String::from_utf8_lossy(&log_agent.stdout);
+    assert!(!log_json.contains("192.168.1.100"));
 }
