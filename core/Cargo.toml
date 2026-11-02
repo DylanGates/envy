@@ -1,6 +1,6 @@
 [package]
 name = "envy-core"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 
 [dependencies]
@@ -23,3 +23,9 @@ ureq = "3"
 url = "2"
 tempfile = "3"
 argon2 = "0.5"
+ssh-key = { version = "0.6.7", default-features = false, features = ["std", "ed25519", "getrandom"] }
+zeroize = "1"
+signature = "2.2"
+
+[target."cfg(unix)".dependencies]
+libc = "0.2"

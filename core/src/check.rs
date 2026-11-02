@@ -129,8 +129,13 @@ pub fn check_adhoc(vault: &Vault, req: &AdHocCheckRequest) -> Result<CheckResult
         method: "GET",
         command: None,
         has_active_consent: false,
+        recent_request_count: None,
+        payload_bytes: None,
     };
-    match policy::evaluate(&policy_request) {
+    // M0 / G4: consult the project's `.envy/policy.toml`, not built-in
+    // defaults. A malformed policy file fails closed (error).
+    let project_policy = policy::load_policy(vault.project_root())?;
+    match policy::evaluate_with_policy(&policy_request, &project_policy) {
         PolicyDecision::Allow => {}
         PolicyDecision::RequireConsent { reason } => {
             return Err(CoreError::ConsentRequired(reason));
@@ -251,8 +256,13 @@ pub fn check_cataloged(
         method: "GET",
         command: None,
         has_active_consent: false,
+        recent_request_count: None,
+        payload_bytes: None,
     };
-    match policy::evaluate(&policy_request) {
+    // M0 / G4: consult the project's `.envy/policy.toml`, not built-in
+    // defaults. A malformed policy file fails closed (error).
+    let project_policy = policy::load_policy(vault.project_root())?;
+    match policy::evaluate_with_policy(&policy_request, &project_policy) {
         PolicyDecision::Allow => {}
         PolicyDecision::RequireConsent { reason } => {
             return Err(CoreError::ConsentRequired(reason));

@@ -28,6 +28,13 @@ pub fn run(reference: String, metadata_only: bool, global: &GlobalArgs) -> anyho
             meta.credential_kind.as_deref().unwrap_or("-")
         );
         println!("risk:            {}", meta.risk.as_deref().unwrap_or("-"));
+        let interval_str = match meta.rotate_after_days {
+            Some(days) => format!("{days} days"),
+            None => "90 days (default)".to_string(),
+        };
+        println!("rotate_interval: {}", interval_str);
+        println!("age_days:        {}", meta.age_days);
+        println!("is_stale:        {}", meta.is_stale);
         println!("created_at:      {}", meta.created_at);
         println!("updated_at:      {}", meta.updated_at);
     }

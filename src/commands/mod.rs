@@ -4,6 +4,7 @@ mod consent;
 mod doctor;
 mod export;
 mod expose;
+mod guard;
 mod hook;
 mod import;
 mod init;
@@ -13,6 +14,7 @@ mod mcp;
 mod policy;
 mod provider;
 mod run;
+mod sandbox;
 mod scan;
 mod show;
 mod ssh;
@@ -30,7 +32,11 @@ pub fn dispatch(cli: Cli) -> anyhow::Result<()> {
             remediate,
             restore,
         } => scan::run(path, remediate, restore, global),
-        Commands::Add { name, from_env } => add::run(name, from_env, global),
+        Commands::Add {
+            name,
+            from_env,
+            rotate_after_days,
+        } => add::run(name, from_env, rotate_after_days, global),
         Commands::List => list::run(global),
         Commands::Show {
             reference,
@@ -53,6 +59,7 @@ pub fn dispatch(cli: Cli) -> anyhow::Result<()> {
             global,
         ),
         Commands::Run { command } => run::run(command, global),
+        Commands::Sandbox { remediate, command } => sandbox::run(remediate, command, global),
         Commands::Expose { action } => expose::run(action, global),
         Commands::Log { project, follow } => log::run(project, follow, global),
         Commands::Export {
@@ -69,6 +76,7 @@ pub fn dispatch(cli: Cli) -> anyhow::Result<()> {
         Commands::Ssh { action } => ssh::run(action, global),
         Commands::Policy => policy::run(global),
         Commands::Hook { action } => hook::run(action, global),
+        Commands::Guard { action } => guard::run(action, global),
     }
 }
 
