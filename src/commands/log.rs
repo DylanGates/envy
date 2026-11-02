@@ -51,16 +51,33 @@ fn print_event(
     event: &envy_core::audit::AuditEventRecord,
     global: &GlobalArgs,
 ) -> anyhow::Result<()> {
+    let is_agent = std::env::var("ENVY_AGENT_ID")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .is_some();
     if global.json {
-        println!("{}", serde_json::to_string(event)?);
+        if is_agent {
+            let mut val = serde_json::to_value(event)?;
+            if val.get("endpoint_host").is_some() {
+                val["endpoint_host"] = serde_json::Value::String("[REDACTED]".to_string());
+            }
+            println!("{}", serde_json::to_string(&val)?);
+        } else {
+            println!("{}", serde_json::to_string(event)?);
+        }
     } else if !global.quiet {
+        let host = if is_agent {
+            "[REDACTED]"
+        } else {
+            event.endpoint_host.as_deref().unwrap_or("-")
+        };
         println!(
             "{}  {}  {}  provider={}  host={}",
             event.timestamp,
             event.operation,
             event.outcome,
             event.provider.as_deref().unwrap_or("-"),
-            event.endpoint_host.as_deref().unwrap_or("-"),
+            host,
         );
     }
     Ok(())

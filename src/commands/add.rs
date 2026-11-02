@@ -142,6 +142,7 @@ fn prompt_interactive_wizard(
                 user,
                 identity: resolved_identity,
                 known_host_required: true,
+                host_key: None,
             };
             vault.add_ssh_host(&profile)?;
             vault.log_event(&AuditEvent {
@@ -153,10 +154,21 @@ fn prompt_interactive_wizard(
                 outcome: "success",
                 redaction_summary: Some(&format!("configured host profile '{}'", name)),
             })?;
-            println!(
-                "Added host profile '{}' ({}@{}:{})",
-                profile.name, profile.user, profile.host, profile.port
-            );
+            let is_agent = std::env::var("ENVY_AGENT_ID")
+                .ok()
+                .filter(|s| !s.trim().is_empty())
+                .is_some();
+            if is_agent {
+                println!(
+                    "Added host profile '{}' ([REDACTED]@[REDACTED]:{})",
+                    profile.name, profile.port
+                );
+            } else {
+                println!(
+                    "Added host profile '{}' ({}@{}:{})",
+                    profile.name, profile.user, profile.host, profile.port
+                );
+            }
             Ok(())
         }
         "3" => {
@@ -184,10 +196,18 @@ fn prompt_interactive_wizard(
                 entries.len(),
                 ssh_config_path.display()
             );
+            let is_agent = std::env::var("ENVY_AGENT_ID")
+                .ok()
+                .filter(|s| !s.trim().is_empty())
+                .is_some();
             for (i, entry) in entries.iter().enumerate() {
-                let target = entry.hostname.as_deref().unwrap_or(&entry.host_alias);
-                let user = entry.user.as_deref().unwrap_or("user");
-                println!("  {}) {} -> {}@{}", i + 1, entry.host_alias, user, target);
+                if is_agent {
+                    println!("  {}) {} -> [REDACTED]@[REDACTED]", i + 1, entry.host_alias);
+                } else {
+                    let target = entry.hostname.as_deref().unwrap_or(&entry.host_alias);
+                    let user = entry.user.as_deref().unwrap_or("user");
+                    println!("  {}) {} -> {}@{}", i + 1, entry.host_alias, user, target);
+                }
             }
 
             let sel = prompt_line(&format!("Select host [1-{}]: ", entries.len()))?;
@@ -238,6 +258,7 @@ fn prompt_interactive_wizard(
                 user,
                 identity: identity_name,
                 known_host_required: true,
+                host_key: None,
             };
             vault.add_ssh_host(&profile)?;
             vault.log_event(&AuditEvent {
@@ -252,10 +273,21 @@ fn prompt_interactive_wizard(
                     name
                 )),
             })?;
-            println!(
-                "Added host profile '{}' ({}@{}:{}) from ssh config",
-                profile.name, profile.user, profile.host, profile.port
-            );
+            let is_agent = std::env::var("ENVY_AGENT_ID")
+                .ok()
+                .filter(|s| !s.trim().is_empty())
+                .is_some();
+            if is_agent {
+                println!(
+                    "Added host profile '{}' ([REDACTED]@[REDACTED]:{}) from ssh config",
+                    profile.name, profile.port
+                );
+            } else {
+                println!(
+                    "Added host profile '{}' ({}@{}:{}) from ssh config",
+                    profile.name, profile.user, profile.host, profile.port
+                );
+            }
             Ok(())
         }
         _ => bail!("invalid choice '{choice}'"),

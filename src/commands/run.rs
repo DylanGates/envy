@@ -5,14 +5,43 @@ use crate::cli::GlobalArgs;
 
 pub fn run(command: Vec<String>, global: &GlobalArgs) -> anyhow::Result<()> {
     let full_cmd = command.join(" ");
+    let cwd = std::env::current_dir()?;
+
+    // Guard classifier (same rules as PreToolUse hooks).
+    {
+        let mut gpol = envy_core::policy::load_policy(&cwd)
+            .map(|p| p.guard)
+            .unwrap_or_default();
+        // `envy sandbox`/`envy run` exist specifically to inject vault secrets
+        // into a child env — allow the env-dump programs that agents use to
+        // verify injection (printenv/env/...). Outside of envy, PreToolUse
+        // hooks still block those.
+        for prog in ["printenv", "env", "export", "set", "declare", "typeset"] {
+            if !gpol.allow_commands.iter().any(|c| c == prog) {
+                gpol.allow_commands.push(prog.to_string());
+            }
+        }
+        let decision = envy_core::guard::check_command(&full_cmd, &gpol);
+        if !decision.allow && !gpol.is_audit_mode() {
+            let reason = decision.reason.as_deref().unwrap_or("denied by envy guard");
+            let suggestion = decision.suggestion.as_deref().unwrap_or("");
+            anyhow::bail!(
+                "execution blocked by envy guard [{rule}]: {reason}{hint}",
+                rule = decision.rule.unwrap_or("-"),
+                hint = if suggestion.is_empty() {
+                    String::new()
+                } else {
+                    format!(" — {suggestion}")
+                }
+            );
+        }
+    }
     if envy_core::policy::is_env_file_involved(&full_cmd) {
         anyhow::bail!(
             "execution blocked: command references a .env file ('{full_cmd}'). \
              Governance policy prohibits tools and agents from reading or exposing raw .env secrets."
         );
     }
-
-    let cwd = std::env::current_dir()?;
     let vault = envy_core::vault::open(&cwd)?;
     let secrets = vault.list_secrets()?;
 
